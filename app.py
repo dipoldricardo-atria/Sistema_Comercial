@@ -62,40 +62,57 @@ else:
     else:
         menu = st.sidebar.radio("Navegação", ["Minhas Comissões"])
 
-    # --- ABA: DASHBOARD ---
-    if menu == "Dashboard":
-        st.title("📊 Visão do Diretor")
-        st.divider()
-        st.info("Abaixo você visualiza o resumo de todas as vendas e parcelas.")
-        
-        # Simulando a leitura das vendas
-        try:
-            df_vendas = pd.read_csv(get_google_sheet(URL_BASE)) # Aqui você usaria o GID da aba vendas
-            st.dataframe(df_vendas, use_container_width=True)
-        except:
-            st.warning("Aba de vendas ainda não populada.")
+    # --- ABA: DASHBOARD (DENTRO DO IF PERFIL == "ADMIN") ---
+if menu == "Dashboard":
+    st.title("📊 Painel de Controle Estratégico")
+    st.divider()
 
-    # --- ABA: NOVA VENDA ---
-    elif menu == "Nova Venda":
-        st.title("📝 Cadastrar Novo Projeto")
-        with st.form("form_venda"):
-            cliente = st.text_input("Nome do Cliente")
-            v_total = st.number_input("Valor Total (R$)", min_value=0.0)
-            v_entrada = st.number_input("Entrada (R$)", min_value=0.0)
-            n_parc = st.number_input("Nº de Parcelas", min_value=1, step=1)
-            data_v = st.date_input("Data da Venda", date.today())
+    try:
+        # Lendo a aba de Vendas (Certifique-se de usar o GID da aba vendas)
+        df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
+        
+        if not df_vendas.empty:
+            # Cálculos Rápidos
+            total_contratado = df_vendas['valor'].sum()
+            recebido = df_vendas[df_vendas['status'] == 'Pago']['valor'].sum()
+            pendente = df_vendas[df_vendas['status'] == 'Pendente']['valor'].sum()
+            comissoes_pagar = df_vendas[df_vendas['status'] == 'Pago']['comissao'].sum()
+
+            # Métricas em Colunas
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total em Contratos", f"R$ {total_contratado:,.2f}")
+            c2.metric("Total Recebido", f"R$ {recebido:,.2f}", delta="Fluxo de Caixa")
+            c3.metric("Comissões a Pagar", f"R$ {comissoes_pagar:,.2f}", delta_color="inverse")
+            c4.error(f"Pendente: R$ {pendente:,.2f}")
+
+            st.divider()
             
-            if st.form_submit_button("Gerar Plano de Recebimento"):
-                # Cálculo das parcelas
-                restante = (v_total - v_entrada) / n_parc
-                cronograma = []
-                # Entrada
-                cronograma.append({"Tipo": "Entrada", "Data": data_v, "Valor": v_entrada, "Comissão (5%)": v_entrada*0.05})
-                # Mensalidades
-                for i in range(1, n_parc + 1):
-                    dt = data_v + relativedelta(months=i)
-                    cronograma.append({"Tipo": f"Parcela {i}/{n_parc}", "Data": dt, "Valor": restante, "Comissão (5%)": restante*0.05})
-                
-                st.write("### Plano Gerado:")
-                st.table(pd.DataFrame(cronograma))
-                st.warning("⚠️ Copie os dados acima e cole na sua planilha 'vendas' para salvar.")
+            # Tabela Interativa com Destaque
+            st.subheader("📋 Detalhamento de Recebíveis")
+            
+            # Formatação visual: Se status for Pago fica verde, se Pendente fica padrão
+            def color_status(val):
+                color = 'green' if val == 'Pago' else 'orange'
+                return f'color: {color}'
+
+            st.dataframe(df_vendas.style.applymap(color_status, subset=['status']), use_container_width=True)
+            
+        else:
+            st.info("Sua planilha de vendas está vazia. Comece cadastrando um projeto!")
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar dashboard: {e}")
+
+# --- ABA: MINHAS COMISSÕES (VISÃO DO VENDEDOR) ---
+elif menu == "Minhas Comissões":
+    st.title(f"💰 Extrato de Comissões: {user['nome']}")
+    df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
+    
+    # Filtra apenas as vendas deste vendedor logado
+    meus_dados = df_vendas[df_vendas['vendedor'] == user['nome']]
+    
+    a_receber = meus_dados[meus_dados['status'] == 'Pago']['comissao'].sum()
+    st.metric("Minha Comissão Disponível (Pagos)", f"R$ {a_receber:,.2f}")
+    
+    st.subheader("Histórico de Parcelas")
+    st.dataframe(meus_dados)
