@@ -2,174 +2,115 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-import urllib.parse
-import plotly.express as px
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-# --- 1. CONFIGURAÇÕES MESTRAS ---
-st.set_page_config(page_title="ERP COMERCIAL PRO", layout="wide", page_icon="🚀")
+# --- 1. CONFIGURAÇÕES TÉCNICAS (IDs REAIS DO SEU LINK) ---
+st.set_page_config(page_title="ERP COMERCIAL 2.0", layout="wide", page_icon="🚀")
 
-ID_VALOR_TOTAL = "1849135056"
-ID_DATA_BASE = "925681697"
+# URLs DA NOVA ESTRUTURA (Substitua pelos seus novos links)
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
+CSV_URL = "SUA_URL_DE_EXPORT_CSV_DA_NOVA_PLANILHA" 
+SCRIPT_URL = "SUA_URL_DO_NOVO_APPS_SCRIPT"
 
-URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
-GID_VENDAS = "1045730969"
-GID_USUARIOS = "1357723875"
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwOR4tCPLwpmn28h4TqG-hz4HxM5APUhoZ00TgQ6SVz6rSs79r1rixjmw9K6CoRJFdI/exec"
+# IDs MAPEADOS DO SEU LINK PREENCHIDO
+IDs = {
+    "cliente": "354575898",
+    "vendedor": "1508368855",
+    "tipo": "2051931448",
+    "vencimento": "440689882",
+    "valor_parc": "1010209945",
+    "comissao": "1053130357",
+    "status": "852082294",
+    "valor_total": "1567666645",
+    "data_base": "1443725489"
+}
 
-def carregar_dados(gid):
+def carregar_dados():
     try:
-        url = f"https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/export?format=csv&gid={gid}&t={int(time.time())}"
-        return pd.read_csv(url)
+        # Forçamos a atualização com o timestamp no final
+        url = f"{CSV_URL}&t={int(time.time())}"
+        df = pd.read_csv(url)
+        if df.empty: return pd.DataFrame()
+        # Ajuste de colunas para o padrão de 10 colunas
+        df = df.iloc[:, :10]
+        df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor_Parc', 'Comissao', 'Status', 'Valor_Total', 'Data_Base']
+        return df
     except:
         return pd.DataFrame()
 
-def limpar_financeiro(val):
-    try:
-        if pd.isna(val): return 0.0
-        if isinstance(val, str): return float(val.replace('.', '').replace(',', '.'))
-        return float(val)
-    except: return 0.0
+# --- 2. INTERFACE ---
+st.title("🚀 ERP Comercial - Nova Era")
 
-# --- 2. CONTROLE DE ACESSO ---
-if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+menu = st.sidebar.radio("Navegação", ["📝 Lançar Venda", "📊 Dashboard", "✅ Baixar Pagamento"])
 
-if not st.session_state['logged_in']:
-    st.title("🚀 Portal Comercial - Login")
-    u_in = st.sidebar.text_input("E-mail").lower().strip()
-    s_in = st.sidebar.text_input("Senha", type="password")
-    if st.sidebar.button("Entrar"):
-        df_u = carregar_dados(GID_USUARIOS)
-        if not df_u.empty:
-            user_db = df_u[(df_u['email'].str.lower() == u_in) & (df_u['senha'].astype(str) == s_in)]
-            if not user_db.empty:
-                st.session_state.update({
-                    'logged_in': True, 
-                    'user_info': user_db.iloc[0].to_dict(), 
-                    'lista_vendedores': df_u['nome'].unique().tolist(),
-                    'df_usuarios': df_u
-                })
-                st.rerun()
-            else: st.error("Acesso negado.")
-        else: st.error("Erro ao carregar usuários.")
-else:
-    user = st.session_state['user_info']
-    perfil_admin = user['perfil'] == "Admin"
-    st.sidebar.markdown(f"👤 **{user['nome']}**")
-    menu = st.sidebar.radio("Navegação", ["📊 Dashboard Executivo", "📝 Gestão de Vendas", "✅ Baixar Pagamentos"])
-    
-    # --- 3. PROCESSAMENTO 10 COLUNAS ---
-    df_raw = carregar_dados(GID_VENDAS)
-    if not df_raw.empty and len(df_raw.columns) >= 10:
-        df = df_raw.iloc[:, :10].copy()
-        df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor_Parc', 'Comissao', 'Status', 'Valor_Total', 'Data_Base']
-        df['Val_P_N'] = df['Valor_Parc'].apply(limpar_financeiro)
-        df['Val_T_N'] = df['Valor_Total'].apply(limpar_financeiro)
-        df['DB_Date'] = pd.to_datetime(df['Data_Base'], dayfirst=True, errors='coerce')
-        df['DV_Date'] = pd.to_datetime(df['Vencimento'], dayfirst=True, errors='coerce')
-        df = df.dropna(subset=['DB_Date', 'DV_Date'])
-        if not df.empty:
-            df['Mes_Base'] = df['DB_Date'].dt.to_period('M')
-            df['Mes_Venc'] = df['DV_Date'].dt.to_period('M')
-    else:
-        df = pd.DataFrame()
-
-    # --- 4. DASHBOARD EXECUTIVO (COM TRAVA DE SEGURANÇA) ---
-    if menu == "📊 Dashboard Executivo":
-        st.title("📊 Inteligência Comercial")
+if menu == "📝 Lançar Venda":
+    st.subheader("Novo Registro (Base Zerada)")
+    with st.form("venda_nova", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        f_cli = c1.text_input("Nome do Cliente")
+        f_vend = c2.text_input("Vendedor")
+        f_data = c3.date_input("Data do Contrato (Data Base)")
         
-        if df.empty:
-            st.info("💡 A base de dados está vazia. Registre a primeira venda em 'Gestão de Vendas' para ativar os indicadores.")
-        else:
-            df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
-            
-            # --- PROTEÇÃO CONTRA O ERRO RangeError ---
-            m_list = sorted(df['Mes_Base'].unique())
-            
-            if len(m_list) > 1:
-                c1, c2 = st.columns([1, 3])
-                m_sel = c2.select_slider("Período de Análise (Data Base)", options=m_list, value=(m_list[0], m_list[-1]))
-                df_filtrado = df_dash[(df_dash['Mes_Base'] >= m_sel[0]) & (df_dash['Mes_Base'] <= m_sel[1])]
+        f_total = c1.number_input("Valor Total do Contrato", min_value=0.0)
+        f_entrada = c2.number_input("Valor da Entrada", min_value=0.0)
+        f_parc = c3.number_input("Parcelas Restantes (0 = Recorrência)", min_value=0, value=1)
+        
+        if st.form_submit_button("🚀 GRAVAR NA NOVA PLANILHA"):
+            if not f_cli or f_total <= 0:
+                st.warning("Preencha cliente e valor total!")
             else:
-                # Se houver apenas um mês, não precisa do slider (evita o erro)
-                df_filtrado = df_dash
-                st.info(f"Exibindo dados de: {m_list[0]}")
+                success = 0
+                # Cálculo de valores
+                saldo = f_total - f_entrada
+                loops = 1 if f_parc == 0 else int(f_parc)
+                v_p = saldo / loops if f_parc > 0 else f_total
+                
+                def enviar(tipo_mov, valor_mov, data_mov):
+                    payload = {
+                        f"entry.{IDs['cliente']}": f_cli,
+                        f"entry.{IDs['vendedor']}": f_vend,
+                        f"entry.{IDs['tipo']}": tipo_mov,
+                        f"entry.{IDs['vencimento']}": data_mov,
+                        f"entry.{IDs['valor_parc']}": str(round(valor_mov,2)).replace('.',','),
+                        f"entry.{IDs['comissao']}": str(round(valor_mov*0.05,2)).replace('.',','),
+                        f"entry.{IDs['status']}": "Pendente",
+                        f"entry.{IDs['valor_total']}": str(round(f_total,2)).replace('.',','),
+                        f"entry.{IDs['data_base']}": f_data.strftime('%Y-%m-%d')
+                    }
+                    r = requests.post(FORM_URL, data=payload)
+                    return r.status_code == 200
 
-            df_fat_real = df_filtrado.drop_duplicates('TS')
-            
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("💰 Faturado Bruto", f"R$ {df_fat_real['Val_T_N'].sum():,.2f}")
-            k2.metric("✅ Caixa Realizado", f"R$ {df_filtrado[df_filtrado['Status']=='Pago']['Val_P_N'].sum():,.2f}")
-            k3.metric("⏳ A Receber", f"R$ {df_filtrado[df_filtrado['Status']=='Pendente']['Val_P_N'].sum():,.2f}")
-            k4.metric("🤝 Contratos", len(df_fat_real))
+                # 1. Grava Entrada
+                if f_entrada > 0:
+                    if enviar("Entrada", f_entrada, f_data.strftime('%Y-%m-%d')): success += 1
+                
+                # 2. Grava Parcelas ou Recorrência
+                for i in range(loops):
+                    # Se tem entrada, a 1ª parcela é em 30 dias. Se não, começa hoje.
+                    venc_dt = f_data + relativedelta(months=i+1 if f_entrada > 0 else i)
+                    t_txt = f"Parc {i+1}/{int(f_parc)}" if f_parc > 0 else "Recorrência"
+                    if enviar(t_txt, v_p, venc_dt.strftime('%Y-%m-%d')): success += 1
+                
+                if success > 0:
+                    st.success(f"✅ Sucesso! {success} registros enviados.")
+                    time.sleep(2)
+                    st.rerun()
 
-            st.divider()
-            st.subheader("📋 Tabela de Contratos no Período")
-            st.dataframe(df_fat_real[['Data_Base', 'Cliente', 'Vendedor', 'Valor_Total', 'Tipo']], use_container_width=True)
+elif menu == "📊 Dashboard":
+    df = carregar_dados()
+    if df.empty:
+        st.info("Aguardando o primeiro lançamento na nova planilha.")
+    else:
+        st.write("### Dados Atuais")
+        st.dataframe(df)
 
-    # --- 5. GESTÃO DE VENDAS ---
-    elif menu == "📝 Gestão de Vendas":
-        st.title("📝 Central de Contratos")
-        with st.form("venda_blindada", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            f_cli = c1.text_input("Cliente")
-            f_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores']) if perfil_admin else c2.text_input("Vendedor", user['nome'], disabled=True)
-            f_data = c3.date_input("Data Base (Fechamento)")
-            
-            f_total = c1.number_input("Valor TOTAL", min_value=0.0)
-            f_entrada = c2.number_input("Valor ENTRADA", min_value=0.0)
-            f_parc = c3.number_input("Parcelas RESTANTES (0 = Mensal)", min_value=0, value=1)
-            
-            if st.form_submit_button("🚀 FINALIZAR E GRAVAR"):
-                if not f_cli or f_total <= 0:
-                    st.error("Erro: Preencha Cliente e Valor Total.")
-                else:
-                    success = 0
-                    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-                    
-                    if f_entrada > 0:
-                        p_e = {
-                            "entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": "Entrada",
-                            "entry.366765493": f_data.strftime('%d/%m/%Y'), "entry.1610537227": str(round(f_entrada,2)).replace('.',','),
-                            "entry.622689505": "Pendente", f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
-                            f"entry.{ID_DATA_BASE}": f_data.strftime('%d/%m/%Y')
-                        }
-                        r_e = requests.post(FORM_URL, data=p_e, headers=headers)
-                        if r_e.status_code == 200: success += 1
-                    
-                    saldo = f_total - f_entrada
-                    loops = 1 if f_parc == 0 else int(f_parc)
-                    v_p = saldo / loops if f_parc > 0 else f_total
-                    
-                    for i in range(loops):
-                        venc_dt = f_data + relativedelta(months=i+1 if f_entrada > 0 else i)
-                        tipo_p = f"Parc {i+1}/{int(f_parc)}" if f_parc > 0 else "Mensalidade (Recorrente)"
-                        p_p = {
-                            "entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": tipo_p,
-                            "entry.366765493": venc_dt.strftime('%d/%m/%Y'), "entry.1610537227": str(round(v_p,2)).replace('.',','),
-                            "entry.622689505": "Pendente", f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
-                            f"entry.{ID_DATA_BASE}": f_data.strftime('%d/%m/%Y')
-                        }
-                        r_p = requests.post(FORM_URL, data=p_p, headers=headers)
-                        if r_p.status_code == 200: success += 1
-                    
-                    if success > 0:
-                        st.success("✅ Gravado com sucesso!")
-                        time.sleep(2)
-                        st.rerun()
-
-    # --- 6. BAIXAS ---
-    elif menu == "✅ Baixar Pagamentos":
-        st.title("✅ Conciliação Financeira")
-        if not perfil_admin: st.error("Acesso restrito."); st.stop()
-        
-        pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
+elif menu == "✅ Baixar Pagamento":
+    df = carregar_dados()
+    if not df.empty:
+        pendentes = df[df['Status'].str.contains("Pendente", na=False)]
         for i, r in pendentes.iterrows():
-            with st.expander(f"{r['Cliente']} | {r['Tipo']} | R$ {r['Valor_Parc']}"):
-                if st.button("Confirmar Baixa", key=f"bx_{i}"):
+            with st.expander(f"{r['Cliente']} - R$ {r['Valor_Parc']}"):
+                if st.button("Confirmar Recebimento", key=i):
                     requests.get(f"{SCRIPT_URL}?row={i+2}&status=Pago")
-                    st.success("Baixado!"); time.sleep(1); st.rerun()
-
-    if st.sidebar.button("Sair"): st.session_state.clear(); st.rerun()
+                    st.rerun()
