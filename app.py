@@ -4,15 +4,15 @@ import requests
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-# --- 1. CONFIGURAÇÕES INICIAIS (FIXAS) ---
+# --- 1. CONFIGURAÇÕES INICIAIS (MEMORIZADAS) ---
 st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
 
-# Suas coordenadas memorizadas
+# Suas coordenadas de banco de dados
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_USUARIOS = "1357723875" 
-GID_VENDAS = "1045730969"   # ABA DE RESPOSTAS DO FORMULÁRIO
+GID_VENDAS = "1045730969"   
 
-# URL de Resposta do seu Google Forms (IMPORTANTE: Verifique se termina em /formResponse)
+# URL do seu formulário PUBLICADO
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
 
 def get_google_sheet(url, gid):
@@ -54,7 +54,7 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- 4. TELA: DASHBOARD ---
+    # --- 3. TELA: DASHBOARD ---
     if menu == "Dashboard":
         st.title("📊 Painel de Controle (Diretoria)")
         st.divider()
@@ -78,11 +78,11 @@ else:
                 st.subheader("Lista Geral de Lançamentos")
                 st.dataframe(df_vendas, use_container_width=True)
             else:
-                st.info("Aba de vendas vazia no Google Sheets (GID 1045730969).")
+                st.info("Aba de vendas vazia no Google Sheets.")
         except Exception as e:
             st.error(f"Erro ao carregar Dashboard: {e}")
 
-    # --- 5. TELA: CADASTRAR VENDA ---
+    # --- 4. TELA: CADASTRAR VENDA ---
     elif menu == "Cadastrar Venda":
         st.title("📝 Gerar e Salvar Novo Contrato")
         with st.form("form_venda", clear_on_submit=True):
@@ -96,6 +96,7 @@ else:
             if st.form_submit_button("🚀 Salvar na Nuvem"):
                 if cliente != "" and v_total > 0:
                     valor_parcelado = (v_total - v_entrada) / n_parc
+                    sucesso_envio = True
                     
                     for i in range(int(n_parc) + 1):
                         tipo = "Entrada" if i == 0 else f"Parcela {i}/{int(n_parc)}"
@@ -104,26 +105,29 @@ else:
                         
                         dt_at = data_v + relativedelta(months=i)
                         
-                        # PARÂMETROS - Mudamos o formato da data para YYYY-MM-DD (Padrão ISO que o Google aceita melhor)
-                        params = {
+                        # Payload enviado para o formulário publicado
+                        payload = {
                             "entry.1532857351": cliente,
                             "entry.1279554151": user['nome'],
                             "entry.1633578859": tipo,
-                            "entry.366765493": dt_at.strftime('%Y-%m-%d'), 
+                            "entry.366765493": dt_at.strftime('%d/%m/%Y'),
                             "entry.1610537227": str(round(valor_at, 2)).replace('.', ','),
                             "entry.1726017566": str(round(valor_at * 0.05, 2)).replace('.', ','),
                             "entry.622689505": "Pendente"
                         }
                         
                         try:
-                            # Usamos POST para garantir a entrega
-                            response = requests.post(FORM_URL, data=params)
-                            if response.status_code != 200:
-                                st.error(f"Erro no envio da {tipo}: Código {response.status_code}")
-                        except Exception as e:
-                            st.error(f"Falha de conexão: {e}")
+                            # Envio via POST (mais seguro com o formulário publicado)
+                            r = requests.post(FORM_URL, data=payload)
+                            if r.status_code != 200:
+                                sucesso_envio = False
+                        except:
+                            sucesso_envio = False
 
-                    st.success(f"✅ Processo finalizado para {cliente}! Verifique sua planilha.")
-                    st.balloons()
+                    if sucesso_envio:
+                        st.success(f"✅ Venda de {cliente} salva com sucesso!")
+                        st.balloons()
+                    else:
+                        st.error("Erro ao registrar venda. Verifique se o formulário está publicado e aceitando respostas.")
                 else:
                     st.warning("Preencha o nome do cliente e o valor total.")
