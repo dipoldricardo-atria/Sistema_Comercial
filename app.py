@@ -4,11 +4,12 @@ import requests
 import time
 import urllib.parse
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
 # --- 1. CONFIGURAÇÕES ---
-st.set_page_config(page_title="ERP Comercial PRO", layout="wide")
+st.set_page_config(page_title="Sistema Comercial PRO", layout="wide")
 
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_VENDAS = "1045730969"
@@ -45,45 +46,74 @@ if not st.session_state['logged_in']:
 else:
     user = st.session_state['user_info']
     perfil_admin = user['perfil'] == "Admin"
-    st.sidebar.markdown(f"👤 **{user['nome']}** | `{user['perfil']}`")
-    menu = st.sidebar.radio("Navegação", ["📊 Dashboard", "📝 Gestão de Vendas", "✅ Baixar Pagamentos"])
+    st.sidebar.markdown(f"👤 **{user['nome']}**")
+    menu = st.sidebar.radio("Navegação", ["📊 Dashboard Executivo", "📝 Gestão de Vendas", "✅ Baixar Pagamentos"])
     if st.sidebar.button("Sair"): st.session_state.clear(); st.rerun()
 
-    # Processamento de Dados das Vendas
+    # Carregamento e Tratamento de Dados
     try:
         df = carregar_dados(GID_VENDAS)
         df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
         df['Val_N'] = df['Valor'].apply(limpar_financeiro)
         df['Com_N'] = df['Comissao'].apply(limpar_financeiro)
         df['Data_Venc'] = pd.to_datetime(df['Vencimento'], dayfirst=True)
+        df['Mes_Ano'] = df['Data_Venc'].dt.strftime('%m/%Y')
+        df['Data_Sort'] = df['Data_Venc'].dt.to_period('M')
     except: df = pd.DataFrame()
 
-    # --- 3. DASHBOARD ---
-    if menu == "📊 Dashboard":
-        st.title("📊 Painel de Performance")
+    # --- 3. DASHBOARD EXECUTIVO ---
+    if menu == "📊 Dashboard Executivo":
+        st.title("📊 Indicadores de Performance")
+        
         if not df.empty:
             df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Faturamento", f"R$ {df_dash['Val_N'].sum():,.2f}")
-            m2.metric("Recebido", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}")
-            m3.metric("Pendente", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
-            m4.metric("Comissões", f"R$ {df_dash['Com_N'].sum():,.2f}")
             
-            st.divider()
-            g1, g2 = st.columns(2)
-            if perfil_admin:
-                fig = px.bar(df_dash.groupby('Vendedor')['Val_N'].sum().reset_index(), x='Vendedor', y='Val_N', title="Vendas por Vendedor", color='Vendedor')
-                g1.plotly_chart(fig, use_container_width=True)
-            else:
-                fig = px.area(df_dash.groupby('Data_Venc')['Val_N'].sum().reset_index(), x='Data_Venc', y='Val_N', title="Minha Evolução")
-                g1.plotly_chart(fig, use_container_width=True)
+            # FILTROS SUPERIORES
+            with st.expander("🔍 Filtros de Relatório", expanded=True):
+                f1, f2 = st.columns(2)
+                if perfil_admin:
+                    v_sel = f1.multiselect("Vendedor", df_dash['Vendedor'].unique())
+                    if v_sel: df_dash = df_dash[df_dash['Vendedor'].isin(v_sel)]
                 
-            fig_p = px.pie(df_dash, values='Val_N', names='Status', title="Status dos Recebimentos", color='Status', color_discrete_map={'Pago':'#2ecc71', 'Pendente':'#e74c3c'})
-            g2.plotly_chart(fig_p, use_container_width=True)
-            
-            st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc']), use_container_width=True)
+                m_list = sorted(df['Data_Sort'].unique())
+                m_sel = f2.select_slider("Período de Análise", options=m_list, value=(m_list[0], m_list[-1]))
+                df_dash = df_dash[(df_dash['Data_Sort'] >= m_sel[0]) & (df_dash['Data_Sort'] <= m_sel[1])]
 
-    # --- 4. GESTÃO E EDIÇÃO TOTAL ---
+            # KPIs SÓBRIOS
+            st.markdown("### Resumo Financeiro")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Provisionado Total", f"R$ {df_dash['Val_N'].sum():,.2f}")
+            k2.metric("Recebido (Pago)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}", delta_color="normal")
+            k3.metric("Futuro (Pendente)", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
+            k4.metric("Comissões", f"R$ {df_dash['Com_N'].sum():,.2f}")
+
+            st.divider()
+
+            # GRÁFICOS PROFISSIONAIS
+            c1, c2 = st.columns([2, 1])
+            
+            # Gráfico de Provisão Mensal (Provisionado vs Recebido)
+            df_mes = df_dash.groupby(['Mes_Ano', 'Status', 'Data_Sort'])['Val_N'].sum().reset_index().sort_values('Data_Sort')
+            fig_bar = px.bar(df_mes, x='Mes_Ano', y='Val_N', color='Status', 
+                             title="Previsão de Recebimento Mensal",
+                             color_discrete_map={'Pago': '#1f77b4', 'Pendente': '#d3d3d3'},
+                             barmode='group', text_auto='.2s')
+            fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#555")
+            c1.plotly_chart(fig_bar, use_container_width=True)
+
+            # Distribuição por Tipo de Contrato
+            fig_pie = px.pie(df_dash, values='Val_N', names='Tipo', hole=0.5, 
+                             title="Mix de Contratos",
+                             color_discrete_sequence=px.colors.qualitative.Prism)
+            fig_pie.update_layout(showlegend=False)
+            c2.plotly_chart(fig_pie, use_container_width=True)
+
+            st.markdown("### Detalhamento das Transações")
+            st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Data_Sort', 'Mes_Ano']), use_container_width=True)
+        else:
+            st.info("Nenhum dado encontrado.")
+
+    # --- 4. GESTÃO DE VENDAS ---
     elif menu == "📝 Gestão de Vendas":
         st.title("📝 Central de Contratos")
         acao = st.radio("Operação:", ["Novo Lançamento", "Editar/Corrigir"], horizontal=True)
@@ -98,7 +128,7 @@ else:
                 parc = c1.number_input("Parcelas (0=Vista)", 0, 120)
                 dt_v = c2.date_input("Data Base")
                 
-                if st.form_submit_button("🚀 Lançar"):
+                if st.form_submit_button("🚀 Lançar Contrato"):
                     itens = [{"t": "À Vista", "v": val_t, "m": 0}] if parc == 0 else []
                     if parc > 0:
                         if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
@@ -124,17 +154,17 @@ else:
                     e_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores'], index=st.session_state['lista_vendedores'].index(item['Vendedor']) if item['Vendedor'] in st.session_state['lista_vendedores'] else 0) if perfil_admin else c2.text_input("Vendedor", item['Vendedor'], disabled=True)
                     e_tipo = c1.text_input("Tipo", item['Tipo'])
                     e_venc = c2.text_input("Vencimento (DD/MM/YYYY)", item['Vencimento'])
-                    e_val = c1.text_input("Valor (Ex: 1000,00)", item['Valor'])
+                    e_val = c1.text_input("Valor", item['Valor'])
                     e_com = c2.text_input("Comissão", item['Comissao'])
                     e_stat = st.selectbox("Status", ["Pendente", "Pago"], index=0 if item['Status']=="Pendente" else 1)
                     if st.form_submit_button("💾 Salvar Alterações"):
                         params = {"row": escolha+2, "cliente": e_cli, "vendedor": e_vend, "tipo": e_tipo, "vencimento": e_venc, "valor": e_val, "comissao": e_com, "status": e_stat}
                         requests.get(SCRIPT_URL, params=params)
-                        st.success("Dados Atualizados!"); time.sleep(1); st.rerun()
+                        st.success("Atualizado!"); time.sleep(1); st.rerun()
 
-    # --- 5. BAIXAS E NOTIFICAÇÃO OTIMIZADA ---
+    # --- 5. BAIXAS E WHATSAPP ---
     elif menu == "✅ Baixar Pagamentos":
-        st.title("✅ Conciliação Financeira")
+        st.title("✅ Baixas Financeiras")
         if not perfil_admin: st.error("Acesso restrito."); st.stop()
 
         if st.session_state['venda_baixada']:
@@ -144,29 +174,19 @@ else:
             
             if not v_info.empty:
                 tel = str(v_info.iloc[0]['telefone']).replace(".0", "").replace("+", "").strip()
-                msg = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado no portal. Boas vendas! 🚀")
+                msg = urllib.parse.quote(f"✅ *PAGAMENTO CONFIRMADO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado. 🚀")
                 link = f"https://api.whatsapp.com/send?phone={tel}&text={msg}"
-                
-                st.markdown(f"""
-                    <a href="{link}" target="_blank" style="text-decoration: none;">
-                        <div style="background-color: #25D366; color: white; padding: 18px; text-align: center; border-radius: 12px; font-weight: bold; font-size: 22px; border: 2px solid #128C7E;">
-                            🟢 ENVIAR COMPROVANTE VIA WHATSAPP
-                        </div>
-                    </a>
-                """, unsafe_allow_html=True)
-                st.caption(f"Avisando vendedor: {row_r['Vendedor']}")
+                st.markdown(f'<a href="{link}" target="_blank" style="text-decoration:none;"><div style="background-color:#25D366;color:white;padding:18px;text-align:center;border-radius:12px;font-weight:bold;font-size:22px;">🟢 ENVIAR WHATSAPP PARA {row_r["Vendedor"]}</div></a>', unsafe_allow_html=True)
             
-            if st.button("🔙 Voltar para a Lista"):
+            if st.button("🔙 Voltar para Lista"):
                 st.session_state['venda_baixada'] = None
                 st.rerun()
             st.stop()
 
         pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
-        if not pendentes.empty:
-            for idx, row in pendentes.iterrows():
-                with st.expander(f"{row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
-                    if st.button(f"Confirmar Recebimento", key=f"p_{idx}"):
-                        if "Sucesso" in requests.get(f"{SCRIPT_URL}?row={idx+2}&status=Pago").text:
-                            st.session_state['venda_baixada'] = row.to_dict()
-                            st.rerun()
-        else: st.success("Nenhuma pendência encontrada.")
+        for idx, row in pendentes.iterrows():
+            with st.expander(f"{row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
+                if st.button("Confirmar Recebimento", key=f"p_{idx}"):
+                    if "Sucesso" in requests.get(f"{SCRIPT_URL}?row={idx+2}&status=Pago").text:
+                        st.session_state['venda_baixada'] = row.to_dict()
+                        st.rerun()
