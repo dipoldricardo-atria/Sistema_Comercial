@@ -149,3 +149,60 @@ else:
             if not df_edit.empty:
                 escolha = st.selectbox("Selecione o registro específico:", df_edit.index, format_func=lambda x: f"L{x+2} | {df_edit.loc[x, 'Cliente']} | {df_edit.loc[x, 'Tipo']} | R$ {df_edit.loc[x, 'Valor']}")
                 item = df_edit.loc[escolha]
+                
+                with st.form("edit_full_form"):
+                    st.warning(f"Você está editando o registro na linha {escolha + 2}")
+                    c1, c2 = st.columns(2)
+                    e_cli = c1.text_input("Cliente", item['Cliente'])
+                    e_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores'], index=st.session_state['lista_vendedores'].index(item['Vendedor']) if item['Vendedor'] in st.session_state['lista_vendedores'] else 0) if perfil_admin else c2.text_input("Vendedor", item['Vendedor'], disabled=True)
+                    e_tipo = c1.text_input("Tipo/Descrição", item['Tipo'])
+                    e_venc = c2.text_input("Vencimento (DD/MM/YYYY)", item['Vencimento'])
+                    e_val = c1.text_input("Valor Bruto (Ex: 1500,00)", item['Valor'])
+                    e_com = c2.text_input("Comissão (Ex: 75,00)", item['Comissao'])
+                    e_stat = st.selectbox("Status Atual", ["Pendente", "Pago"], index=0 if item['Status'] == "Pendente" else 1)
+                    
+                    if st.form_submit_button("💾 Salvar Alterações Totais"):
+                        params = {"row": escolha + 2, "cliente": e_cli, "vendedor": e_vend, "tipo": e_tipo, "vencimento": e_venc, "valor": e_val, "comissao": e_com, "status": e_stat}
+                        resp = requests.get(SCRIPT_URL, params=params)
+                        if "Sucesso" in resp.text:
+                            st.success("Planilha atualizada!"); time.sleep(1); st.rerun()
+            else: st.info("Nenhum registro encontrado para este filtro.")
+
+    # --- 5. TELA: BAIXAS + WHATSAPP (COM TRAVA DE SEGURANÇA) ---
+    elif menu == "✅ Baixar Pagamentos":
+        st.title("✅ Conciliação e Baixas")
+        if not perfil_admin: 
+            st.error("Acesso exclusivo para Diretoria e CEO."); st.stop()
+        
+        # Se uma venda acabou de ser baixada, mostra o botão de Zap e trava a tela
+        if st.session_state['venda_baixada']:
+            row_recibo = st.session_state['venda_baixada']
+            st.success(f"📌 Pagamento de {row_recibo['Cliente']} confirmado!")
+            
+            v_info = st.session_state['df_usuarios'][st.session_state['df_usuarios']['nome'] == row_recibo['Vendedor']]
+            
+            c_zap, c_voltar = st.columns(2)
+            if not v_info.empty and 'telefone' in v_info.columns:
+                tel = str(v_info.iloc[0]['telefone']).replace(".0", "").replace("+", "").strip()
+                texto_zap = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_recibo['Cliente']}\n*Valor:* R$ {row_recibo['Valor']}\n*Tipo:* {row_recibo['Tipo']}\n\nO status já foi atualizado no sistema comercial. Parabéns! 🚀")
+                c_zap.link_button(f"📲 Avisar {row_recibo['Vendedor']} agora", f"https://api.whatsapp.com/send?phone={tel}&text={texto_zap}")
+            else:
+                c_zap.warning("Telefone do vendedor não cadastrado.")
+            
+            if c_voltar.button("🔙 Concluir e Voltar para Lista"):
+                st.session_state['venda_baixada'] = None
+                st.rerun()
+            st.stop() # Mantém a tela de recibo até o usuário clicar em voltar
+
+        # Listagem normal para baixas
+        pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
+        if not pendentes.empty:
+            for idx, row in pendentes.iterrows():
+                with st.expander(f"💰 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
+                    if st.button(f"Confirmar Recebimento", key=f"pay_btn_{idx}"):
+                        res_baixa = requests.get(f"{SCRIPT_URL}?row={idx+2}&status=Pago")
+                        if "Sucesso" in res_baixa.text:
+                            st.session_state['venda_baixada'] = row.to_dict()
+                            st.rerun()
+        else:
+            st.success("Parabéns! Não existem recebimentos pendentes no momento.")
