@@ -12,7 +12,7 @@ URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQ
 GID_USUARIOS = "1357723875" 
 GID_VENDAS = "1045730969"   # ABA DE RESPOSTAS DO FORMULÁRIO
 
-# URL de Resposta do seu Google Forms
+# URL de Resposta do seu Google Forms (IMPORTANTE: Verifique se termina em /formResponse)
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
 
 def get_google_sheet(url, gid):
@@ -42,7 +42,6 @@ if not st.session_state['logged_in']:
             except Exception as e:
                 st.error(f"Erro ao acessar base: {e}")
 else:
-    # --- 3. MENU LATERAL ---
     user = st.session_state['user_info']
     st.sidebar.success(f"Logado: {user['nome']}")
     
@@ -55,14 +54,13 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- 4. TELA: DASHBOARD (DIRETORIA) ---
+    # --- 4. TELA: DASHBOARD ---
     if menu == "Dashboard":
         st.title("📊 Painel de Controle (Diretoria)")
         st.divider()
         try:
             df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
             if not df_vendas.empty:
-                # Função para tratar números vindo do Forms (Ex: 1.000,50 -> 1000.50)
                 def limpar_financeiro(val):
                     try:
                         if isinstance(val, str):
@@ -70,7 +68,6 @@ else:
                         return float(val)
                     except: return 0.0
 
-                # Ajuste das colunas de Valor (5) e Comissão (6)
                 df_vendas['valor_num'] = df_vendas.iloc[:, 5].apply(limpar_financeiro)
                 df_vendas['com_num'] = df_vendas.iloc[:, 6].apply(limpar_financeiro)
                 
@@ -81,11 +78,11 @@ else:
                 st.subheader("Lista Geral de Lançamentos")
                 st.dataframe(df_vendas, use_container_width=True)
             else:
-                st.info("Aba de vendas vazia. Cadastre uma venda para ver os dados.")
+                st.info("Aba de vendas vazia no Google Sheets (GID 1045730969).")
         except Exception as e:
             st.error(f"Erro ao carregar Dashboard: {e}")
 
-    # --- 5. TELA: CADASTRAR VENDA (MÉTODO INFALÍVEL) ---
+    # --- 5. TELA: CADASTRAR VENDA ---
     elif menu == "Cadastrar Venda":
         st.title("📝 Gerar e Salvar Novo Contrato")
         with st.form("form_venda", clear_on_submit=True):
@@ -99,7 +96,6 @@ else:
             if st.form_submit_button("🚀 Salvar na Nuvem"):
                 if cliente != "" and v_total > 0:
                     valor_parcelado = (v_total - v_entrada) / n_parc
-                    sucesso_geral = True
                     
                     for i in range(int(n_parc) + 1):
                         tipo = "Entrada" if i == 0 else f"Parcela {i}/{int(n_parc)}"
@@ -108,39 +104,26 @@ else:
                         
                         dt_at = data_v + relativedelta(months=i)
                         
-                        # PARÂMETROS PARA O LINK DO GOOGLE
+                        # PARÂMETROS - Mudamos o formato da data para YYYY-MM-DD (Padrão ISO que o Google aceita melhor)
                         params = {
                             "entry.1532857351": cliente,
                             "entry.1279554151": user['nome'],
                             "entry.1633578859": tipo,
-                            "entry.366765493": dt_at.strftime('%d/%m/%Y'),
+                            "entry.366765493": dt_at.strftime('%Y-%m-%d'), 
                             "entry.1610537227": str(round(valor_at, 2)).replace('.', ','),
                             "entry.1726017566": str(round(valor_at * 0.05, 2)).replace('.', ','),
-                            "entry.622689505": "Pendente",
-                            "submit": "Submit"
+                            "entry.622689505": "Pendente"
                         }
                         
                         try:
-                            # Técnica GET: Mais robusta contra bloqueios de segurança
-                            requests.get(FORM_URL, params=params)
-                        except:
-                            sucesso_geral = False
+                            # Usamos POST para garantir a entrega
+                            response = requests.post(FORM_URL, data=params)
+                            if response.status_code != 200:
+                                st.error(f"Erro no envio da {tipo}: Código {response.status_code}")
+                        except Exception as e:
+                            st.error(f"Falha de conexão: {e}")
 
-                    if sucesso_geral:
-                        st.success(f"✅ Venda de {cliente} salva com sucesso!")
-                        st.balloons()
-                    else:
-                        st.error("Erro ao salvar. Verifique se o formulário está aberto para o público.")
+                    st.success(f"✅ Processo finalizado para {cliente}! Verifique sua planilha.")
+                    st.balloons()
                 else:
                     st.warning("Preencha o nome do cliente e o valor total.")
-
-    # --- 6. TELA: VENDEDOR ---
-    elif menu == "Minhas Comissões":
-        st.title(f"💰 Extrato: {user['nome']}")
-        try:
-            df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
-            # Filtra vendas onde a coluna 2 (Vendedor) é igual ao nome do logado
-            meu_df = df_vendas[df_vendas.iloc[:, 2] == user['nome']]
-            st.dataframe(meu_df, use_container_width=True)
-        except:
-            st.error("Erro ao carregar dados.")
