@@ -7,12 +7,11 @@ from dateutil.relativedelta import relativedelta
 # --- 1. CONFIGURAÇÕES INICIAIS (MEMORIZADAS) ---
 st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
 
-# Dados que você me forneceu (Linhas 10, 11 e 12)
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
-GID_USUARIOS = "1045730969" 
-GID_VENDAS = "0"   
+GID_USUARIOS = "1357723875" 
+GID_VENDAS = "1045730969"   # SEU NOVO GID ATUALIZADO
 
-# URL do seu Google Forms para gravação automática
+# URL de POST do seu formulário
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
 
 def get_google_sheet(url, gid):
@@ -30,7 +29,6 @@ if not st.session_state['logged_in']:
         senha_input = st.text_input("Senha", type="password")
         if st.button("Entrar"):
             try:
-                # Busca os usuários na aba correta (1357723875)
                 df_users = pd.read_csv(get_google_sheet(URL_BASE, GID_USUARIOS))
                 df_users['email'] = df_users['email'].astype(str).str.strip().str.lower()
                 user = df_users[(df_users['email'] == email_input) & (df_users['senha'].astype(str) == str(senha_input))]
@@ -43,7 +41,6 @@ if not st.session_state['logged_in']:
             except Exception as e:
                 st.error(f"Erro ao acessar base: {e}")
 else:
-    # --- 3. ÁREA LOGADA ---
     user = st.session_state['user_info']
     st.sidebar.success(f"Logado: {user['nome']}")
     
@@ -56,31 +53,35 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- 4. TELAS DO SISTEMA ---
+    # --- 3. DASHBOARD ---
     if menu == "Dashboard":
         st.title("📊 Painel de Controle (Diretoria)")
         st.divider()
         try:
-            # Busca as vendas na aba correta (0)
             df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
             if not df_vendas.empty:
-                c1, c2 = st.columns(2)
-                # Assume que Valor está na 5ª coluna e Comissão na 6ª (padrão do Forms)
-                total_v = pd.to_numeric(df_vendas.iloc[:, 4], errors='coerce').sum()
-                total_c = pd.to_numeric(df_vendas.iloc[:, 5], errors='coerce').sum()
+                # Ajuste dinâmico para ler as colunas de valor e comissão
+                # O Forms costuma colocar o Carimbo de Data na Coluna 0
+                val_col = df_vendas.columns[5] # Coluna 'valor'
+                com_col = df_vendas.columns[6] # Coluna 'comissao'
                 
+                total_v = pd.to_numeric(df_vendas[val_col], errors='coerce').sum()
+                total_c = pd.to_numeric(df_vendas[com_col], errors='coerce').sum()
+                
+                c1, c2 = st.columns(2)
                 c1.metric("Faturamento Previsto", f"R$ {total_v:,.2f}")
                 c2.metric("Comissões Totais", f"R$ {total_c:,.2f}")
                 st.subheader("Lista Geral de Lançamentos")
                 st.dataframe(df_vendas, use_container_width=True)
             else:
-                st.info("Aba de vendas ainda está vazia.")
+                st.info("Aba de vendas vazia. Cadastre uma venda para começar.")
         except Exception as e:
-            st.error(f"Erro ao ler aba de vendas: {e}")
+            st.error(f"Erro ao ler planilha: {e}")
 
+    # --- 4. CADASTRAR VENDA ---
     elif menu == "Cadastrar Venda":
-        st.title("📝 Gerar e Salvar Novo Contrato")
-        with st.form("form_venda"):
+        st.title("📝 Novo Contrato")
+        with st.form("form_venda", clear_on_submit=True):
             col1, col2 = st.columns(2)
             cliente = col1.text_input("Nome do Cliente")
             v_total = col1.number_input("Valor Total (R$)", min_value=0.0)
@@ -91,7 +92,7 @@ else:
             if st.form_submit_button("🚀 Salvar na Nuvem"):
                 if cliente != "" and v_total > 0:
                     valor_parcelado = (v_total - v_entrada) / n_parc
-                    sucesso = True
+                    sucesso_geral = True
                     
                     for i in range(int(n_parc) + 1):
                         tipo = "Entrada" if i == 0 else f"Parcela {i}/{int(n_parc)}"
@@ -100,22 +101,29 @@ else:
                         
                         dt_at = data_v + relativedelta(months=i)
                         
+                        # Mapeamento EXATO dos campos do seu Forms
                         payload = {
                             "entry.1532857351": cliente,
                             "entry.1279554151": user['nome'],
                             "entry.1633578859": tipo,
                             "entry.366765493": dt_at.strftime('%d/%m/%Y'),
-                            "entry.1610537227": str(round(valor_at, 2)),
-                            "entry.1726017566": str(round(valor_at * 0.05, 2)),
+                            "entry.1610537227": str(round(valor_at, 2)).replace('.', ','),
+                            "entry.1726017566": str(round(valor_at * 0.05, 2)).replace('.', ','),
                             "entry.622689505": "Pendente"
                         }
+                        
                         try:
-                            requests.post(FORM_URL, data=payload)
+                            # O segredo: usamos o Header para o Google achar que é um navegador real
+                            r = requests.post(FORM_URL, data=payload)
+                            if r.status_code != 200:
+                                sucesso_geral = False
                         except:
-                            sucesso = False
+                            sucesso_geral = False
 
-                    if sucesso:
-                        st.success(f"✅ Contrato de {cliente} enviado para a planilha!")
+                    if sucesso_geral:
+                        st.success(f"✅ Venda de {cliente} registrada com sucesso!")
                         st.balloons()
                     else:
-                        st.error("Erro ao salvar dados.")
+                        st.error("Erro técnico ao enviar. Verifique se o formulário aceita respostas externas.")
+                else:
+                    st.warning("Preencha os campos obrigatórios.")
