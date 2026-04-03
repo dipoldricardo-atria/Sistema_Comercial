@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-import plotly.express as px # Biblioteca para gráficos profissionais
+import plotly.express as px
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
@@ -39,20 +39,25 @@ if not st.session_state['logged_in']:
         if not user.empty:
             st.session_state['logged_in'] = True
             st.session_state['user_info'] = user.iloc[0].to_dict()
+            st.session_state['lista_vendedores'] = df_u['nome'].unique().tolist()
             st.rerun()
         else: st.error("Login inválido.")
 else:
     user = st.session_state['user_info']
-    st.sidebar.markdown(f"👤 **{user['nome']}**")
-    st.sidebar.markdown(f"🏷️ Perfil: `{user['perfil']}`")
+    perfil_admin = user['perfil'] == "Admin"
     
-    if user['perfil'] == "Admin":
-        menu = st.sidebar.radio("Navegação", ["📊 Dashboard Estratégico", "📝 Nova Venda", "✅ Baixar Pagamentos"])
-    else:
-        menu = st.sidebar.radio("Navegação", ["💰 Minhas Comissões", "📝 Nova Venda"])
+    st.sidebar.markdown(f"👤 **{user['nome']}**")
+    st.sidebar.markdown(f"🏷️ `{user['perfil']}`")
+    
+    # MENU AGORA É IGUAL PARA TODOS, MAS OS DADOS DENTRO SÃO DIFERENTES
+    abas = ["📊 Meu Dashboard", "📝 Lançar Venda"]
+    if perfil_admin:
+        abas.append("✅ Baixar Pagamentos")
+    
+    menu = st.sidebar.radio("Navegação", abas)
     
     if st.sidebar.button("Sair"):
-        st.session_state['logged_in'] = False
+        st.session_state.clear()
         st.rerun()
 
     # --- 3. PROCESSAMENTO DE DADOS ---
@@ -61,114 +66,103 @@ else:
         df.columns = ['Timestamp', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
         df['Val_N'] = df['Valor'].apply(limpar_financeiro)
         df['Com_N'] = df['Comissao'].apply(limpar_financeiro)
-        # Converte vencimento para data real para filtros
         df['Data_Venc'] = pd.to_datetime(df['Vencimento'], dayfirst=True)
     except: df = pd.DataFrame()
 
-    # --- 4. TELA: DASHBOARD (ADMIN) ---
-    if menu == "📊 Dashboard Estratégico":
-        st.title("📊 Inteligência Comercial")
+    # --- 4. TELA: DASHBOARD INTELIGENTE (FILTRADO POR PERFIL) ---
+    if menu == "📊 Meu Dashboard":
+        titulo = "📊 Dashboard de Performance" if not perfil_admin else "📊 Painel de Controle Estratégico"
+        st.title(titulo)
         
         if not df.empty:
-            # Filtros Superiores
+            # LÓGICA DE FILTRO DE SEGURANÇA
+            if perfil_admin:
+                df_base = df.copy() # Admin vê tudo
+            else:
+                df_base = df[df['Vendedor'] == user['nome']].copy() # Vendedor só vê o dele
+
+            # Filtros de Topo
             with st.container(border=True):
-                c1, c2, c3 = st.columns(3)
-                vendedores = df['Vendedor'].unique().tolist()
-                f_vend = c1.multiselect("Filtrar Vendedor", vendedores)
+                c1, c2 = st.columns(2)
+                if perfil_admin:
+                    f_vend = c1.multiselect("Vendedor", df_base['Vendedor'].unique())
+                    if f_vend: df_base = df_base[df_base['Vendedor'].isin(f_vend)]
                 
-                # Filtro por Mês
-                meses = df['Data_Venc'].dt.strftime('%m/%Y').unique().tolist()
+                meses = df_base['Data_Venc'].dt.strftime('%m/%Y').unique().tolist()
                 f_mes = c2.selectbox("Mês de Referência", ["Todos"] + meses)
-                
-                f_status = c3.multiselect("Status", ["Pendente", "Pago"], default=["Pendente", "Pago"])
+                if f_mes != "Todos":
+                    df_base = df_base[df_base['Data_Venc'].dt.strftime('%m/%Y') == f_mes]
 
-            # Aplicando Filtros
-            df_f = df.copy()
-            if f_vend: df_f = df_f[df_f['Vendedor'].isin(f_vend)]
-            if f_status: df_f = df_f[df_f['Status'].isin(f_status)]
-            if f_mes != "Todos": df_f = df_f[df_f['Data_Venc'].dt.strftime('%m/%Y') == f_mes]
-
-            # Cards de Resumo
+            # Indicadores Dinâmicos
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Previsto no Período", f"R$ {df_f['Val_N'].sum():,.2f}")
-            m2.metric("Realizado (Pago)", f"R$ {df_f[df_f['Status']=='Pago']['Val_N'].sum():,.2f}")
-            m3.metric("A Receber", f"R$ {df_f[df_f['Status']=='Pendente']['Val_N'].sum():,.2f}")
-            m4.metric("Comissões", f"R$ {df_f['Com_N'].sum():,.2f}")
+            m1.metric("Previsto (Total)", f"R$ {df_base['Val_N'].sum():,.2f}")
+            m2.metric("Realizado (Pago)", f"R$ {df_base[df_base['Status']=='Pago']['Val_N'].sum():,.2f}")
+            m3.metric("Pendente (A Receber)", f"R$ {df_base[df_base['Status']=='Pendente']['Val_N'].sum():,.2f}")
+            m4.metric("Minhas Comissões" if not perfil_admin else "Total Comissões", f"R$ {df_base['Com_N'].sum():,.2f}")
 
-            # Gráficos
+            # Gráficos de Visualização
             st.divider()
-            g1, g2 = st.columns([2, 1])
+            g1, g2 = st.columns(2)
             
             with g1:
-                st.subheader("Faturamento por Vendedor")
-                fig_vend = px.bar(df_f.groupby('Vendedor')['Val_N'].sum().reset_index(), 
-                                 x='Vendedor', y='Val_N', color='Vendedor', text_auto='.2s')
-                st.plotly_chart(fig_vend, use_container_width=True)
+                # Se for Admin, mostra ranking. Se for Vendedor, mostra faturamento por mês dele.
+                if perfil_admin:
+                    fig = px.bar(df_base.groupby('Vendedor')['Val_N'].sum().reset_index(), x='Vendedor', y='Val_N', title="Ranking de Vendas")
+                else:
+                    fig = px.area(df_base.groupby('Data_Venc')['Val_N'].sum().reset_index(), x='Data_Venc', y='Val_N', title="Minha Evolução de Vendas")
+                st.plotly_chart(fig, use_container_width=True)
             
             with g2:
-                st.subheader("Saúde do Recebimento")
-                fig_pizza = px.pie(df_f, values='Val_N', names='Status', color='Status',
-                                  color_discrete_map={'Pago':'#2ecc71', 'Pendente':'#e74c3c'})
-                st.plotly_chart(fig_pizza, use_container_width=True)
+                fig_p = px.pie(df_base, values='Val_N', names='Status', title="Status dos Meus Recebimentos", color='Status',
+                              color_discrete_map={'Pago':'#2ecc71', 'Pendente':'#e74c3c'})
+                st.plotly_chart(fig_p, use_container_width=True)
 
-            st.subheader("Detalhamento dos Lançamentos")
-            st.dataframe(df_f.drop(columns=['Val_N', 'Com_N', 'Data_Venc']), use_container_width=True)
+            st.subheader("Lista Detalhada")
+            st.dataframe(df_base.drop(columns=['Val_N', 'Com_N', 'Data_Venc']), use_container_width=True)
         else:
-            st.info("Sem dados para análise.")
+            st.info("Aguardando lançamentos para gerar estatísticas.")
 
-    # --- 5. TELA: NOVA VENDA (A MESMA LÓGICA VITORIOSA) ---
-    elif menu == "📝 Nova Venda":
-        st.title("📝 Lançar Novo Contrato")
-        # [Mantivemos a lógica de parcelas que já funciona perfeitamente]
+    # --- 5. TELA: LANÇAR VENDA (MANTÉM HIERARQUIA DE ATRIBUIÇÃO) ---
+    elif menu == "📝 Lançar Venda":
+        st.title("📝 Registro de Novo Contrato")
         with st.form("venda_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            cli = col1.text_input("Nome do Cliente")
-            tot = col1.number_input("Valor Total do Projeto", min_value=0.0)
-            ent = col2.number_input("Valor da Entrada", min_value=0.0)
-            parc = col1.number_input("Nº de Parcelas (0 = À Vista)", min_value=0, step=1)
-            dat = col2.date_input("Data da Venda", format="DD/MM/YYYY")
+            cli = col1.text_input("Cliente")
             
-            if st.form_submit_button("🚀 Registrar Contrato"):
+            if perfil_admin:
+                lista_v = st.session_state.get('lista_vendedores', [user['nome']])
+                vendedor_final = col2.selectbox("Atribuir Vendedor", lista_v)
+            else:
+                vendedor_final = col2.text_input("Vendedor", value=user['nome'], disabled=True)
+            
+            tot = col1.number_input("Valor Total", min_value=0.0)
+            ent = col2.number_input("Entrada", min_value=0.0)
+            parc = col1.number_input("Nº de Parcelas", min_value=0, step=1)
+            dat = col2.date_input("Data", format="DD/MM/YYYY")
+            
+            if st.form_submit_button("🚀 Salvar"):
+                # [Lógica das parcelas mantida aqui]
                 if cli and tot > 0:
                     itens = []
-                    if parc == 0:
-                        itens.append({"t": "À Vista", "v": tot, "m": 0})
+                    if parc == 0: itens.append({"t": "À Vista", "v": tot, "m": 0})
                     else:
                         if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
                         vp = (tot - ent) / parc
                         for i in range(1, int(parc)+1): itens.append({"t": f"Parcela {i}/{int(parc)}", "v": vp, "m": i})
-                    
                     for it in itens:
                         dv = dat + relativedelta(months=it['m'])
-                        pld = {"entry.1532857351": cli, "entry.1279554151": user['nome'], "entry.1633578859": it['t'], "entry.366765493": dv.strftime('%d/%m/%Y'), "entry.1610537227": str(round(it['v'], 2)).replace('.', ','), "entry.1726017566": str(round(it['v']*0.05, 2)).replace('.', ','), "entry.622689505": "Pendente"}
+                        pld = {"entry.1532857351": cli, "entry.1279554151": vendedor_final, "entry.1633578859": it['t'], "entry.366765493": dv.strftime('%d/%m/%Y'), "entry.1610537227": str(round(it['v'], 2)).replace('.', ','), "entry.1726017566": str(round(it['v']*0.05, 2)).replace('.', ','), "entry.622689505": "Pendente"}
                         requests.post(FORM_URL, data=pld)
-                    st.success("Contrato e parcelas geradas com sucesso!")
-                    time.sleep(1); st.rerun()
+                    st.success(f"Venda registrada!"); time.sleep(1); st.rerun()
 
-    # --- 6. TELA: BAIXAS (O QUE CORRIGIMOS POR ÚLTIMO) ---
+    # --- 6. TELA: BAIXAS (RESTRITO A ADMIN) ---
     elif menu == "✅ Baixar Pagamentos":
-        st.title("✅ Baixa Financeira")
-        pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
-        
-        if not pendentes.empty:
+        st.title("✅ Conciliação Financeira")
+        if not df.empty:
+            pendentes = df[df['Status'] == 'Pendente']
             for idx, row in pendentes.iterrows():
                 linha_google = idx + 2
                 with st.expander(f"💰 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
                     if st.button(f"Confirmar Recebimento", key=f"btn_{idx}"):
-                        url_final = f"{SCRIPT_URL}?row={linha_google}&status=Pago"
-                        r = requests.get(url_final)
-                        if "Sucesso" in r.text:
-                            st.success("Pago!")
-                            time.sleep(1.5); st.rerun()
-        else:
-            st.success("Tudo recebido!")
-
-    # --- 7. TELA: VENDEDOR (EXTRATO) ---
-    elif menu == "💰 Minhas Comissões":
-        st.title(f"💰 Extrato Comercial: {user['nome']}")
-        if not df.empty:
-            meu_df = df[df['Vendedor'] == user['nome']].copy()
-            c1, c2 = st.columns(2)
-            c1.metric("Comissões Pagas", f"R$ {meu_df[meu_df['Status'] == 'Pago']['Com_N'].sum():,.2f}")
-            c2.metric("Comissões Pendentes", f"R$ {meu_df[meu_df['Status'] == 'Pendente']['Com_N'].sum():,.2f}")
-            st.dataframe(meu_df.drop(columns=['Val_N', 'Com_N', 'Vendedor', 'Data_Venc']), use_container_width=True)
+                        r = requests.get(f"{SCRIPT_URL}?row={linha_google}&status=Pago")
+                        if "Sucesso" in r.text: st.success("Pago!"); time.sleep(1); st.rerun()
