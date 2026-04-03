@@ -7,12 +7,12 @@ from dateutil.relativedelta import relativedelta
 # --- 1. CONFIGURAÇÕES INICIAIS (MEMORIZADAS) ---
 st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
 
-# Suas coordenadas de banco de dados
+# Coordenadas do Banco de Dados (Google Sheets)
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_USUARIOS = "1357723875" 
 GID_VENDAS = "1045730969"   
 
-# URL do seu formulário PUBLICADO
+# URL do Formulário Publicado
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
 
 def get_google_sheet(url, gid):
@@ -54,7 +54,7 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- 3. TELA: DASHBOARD ---
+    # --- 3. TELA: DASHBOARD (ADMIN) ---
     if menu == "Dashboard":
         st.title("📊 Painel de Controle (Diretoria)")
         st.divider()
@@ -68,6 +68,7 @@ else:
                         return float(val)
                     except: return 0.0
 
+                # No Google Forms: Col 0=Timestamp, 1=Cliente, 2=Vendedor, 3=Tipo, 4=Data, 5=Valor, 6=Comissão
                 df_vendas['valor_num'] = df_vendas.iloc[:, 5].apply(limpar_financeiro)
                 df_vendas['com_num'] = df_vendas.iloc[:, 6].apply(limpar_financeiro)
                 
@@ -82,7 +83,7 @@ else:
         except Exception as e:
             st.error(f"Erro ao carregar Dashboard: {e}")
 
-    # --- 4. TELA: CADASTRAR VENDA ---
+    # --- 4. TELA: CADASTRAR VENDA (COM DATA BR) ---
     elif menu == "Cadastrar Venda":
         st.title("📝 Gerar e Salvar Novo Contrato")
         with st.form("form_venda", clear_on_submit=True):
@@ -91,7 +92,9 @@ else:
             v_total = col1.number_input("Valor Total (R$)", min_value=0.0)
             v_entrada = col2.number_input("Entrada (R$)", min_value=0.0)
             n_parc = col1.number_input("Nº de Parcelas", min_value=1, step=1)
-            data_v = col2.date_input("Data da Venda", date.today())
+            
+            # CORREÇÃO DO FORMATO DE DATA NA INTERFACE (DD/MM/AAAA)
+            data_v = col2.date_input("Data da Venda", value=date.today(), format="DD/MM/YYYY")
             
             if st.form_submit_button("🚀 Salvar na Nuvem"):
                 if cliente != "" and v_total > 0:
@@ -105,7 +108,6 @@ else:
                         
                         dt_at = data_v + relativedelta(months=i)
                         
-                        # Payload enviado para o formulário publicado
                         payload = {
                             "entry.1532857351": cliente,
                             "entry.1279554151": user['nome'],
@@ -117,7 +119,6 @@ else:
                         }
                         
                         try:
-                            # Envio via POST (mais seguro com o formulário publicado)
                             r = requests.post(FORM_URL, data=payload)
                             if r.status_code != 200:
                                 sucesso_envio = False
@@ -128,6 +129,16 @@ else:
                         st.success(f"✅ Venda de {cliente} salva com sucesso!")
                         st.balloons()
                     else:
-                        st.error("Erro ao registrar venda. Verifique se o formulário está publicado e aceitando respostas.")
+                        st.error("Erro ao registrar. Verifique a conexão.")
                 else:
                     st.warning("Preencha o nome do cliente e o valor total.")
+
+    # --- 5. TELA: VENDEDOR ---
+    elif menu == "Minhas Comissões":
+        st.title(f"💰 Extrato: {user['nome']}")
+        try:
+            df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
+            meu_df = df_vendas[df_vendas.iloc[:, 2] == user['nome']]
+            st.dataframe(meu_df, use_container_width=True)
+        except:
+            st.error("Erro ao carregar dados.")
