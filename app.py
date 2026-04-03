@@ -78,19 +78,18 @@ else:
                 m_sel = f2.select_slider("Período de Vencimento (Parcelas)", options=m_list, value=(m_list[0], m_list[-1]))
                 df_dash = df_dash[(df_dash['Data_Sort'] >= m_sel[0]) & (df_dash['Data_Sort'] <= m_sel[1])]
 
-            # CÁLCULO DE FATURAMENTO TOTAL (SOMA ÚNICA POR CLIENTE/TIME)
-            # Para evitar duplicar parcelas, somamos o valor total apenas dos lançamentos únicos de contrato
-            total_contratado = df_dash['Val_N'].sum() 
+            # --- CORREÇÃO DA MÉTRICA DE CONTRATOS ---
+            # Agrupamos por Timestamp (TS), Cliente e Vendedor para pegar o valor total real do contrato fechado
+            df_contratos_unicos = df_dash.groupby(['TS', 'Cliente', 'Vendedor']).agg({'Val_N': 'sum'}).reset_index()
+            total_contratado_real = df_contratos_unicos['Val_N'].sum()
 
             # KPIs
             st.markdown("### 💎 Resumo de Negócios")
-            m1, m2, m3, m4, m5 = st.columns(5)
-            # Este é o valor bruto de todos os contratos somados no período
-            m1.metric("Valor Total Contratos", f"R$ {total_contratado:,.2f}") 
-            m2.metric("Total Recebido (Caixa)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Valor Total Contratos", f"R$ {total_contratado_real:,.2f}") 
+            m2.metric("Recebido (Em Caixa)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}")
             m3.metric("Saldo a Receber", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
             m4.metric("Comissões Totais", f"R$ {df_dash['Com_N'].sum():,.2f}")
-            m5.metric("Volume de Parcelas", len(df_dash))
 
             st.divider()
 
@@ -123,7 +122,7 @@ else:
                 st.plotly_chart(fig_mix, use_container_width=True)
 
             st.divider()
-            st.markdown("### 📋 Listagem Detalhada")
+            st.markdown("### 📋 Listagem Detalhada de Parcelas")
             st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Data_Sort', 'Mes_Ano']), use_container_width=True)
         else:
             st.info("Aguardando dados para gerar o Dashboard...")
@@ -144,6 +143,7 @@ else:
                 dt_v = c2.date_input("Data Base")
                 
                 if st.form_submit_button("🚀 Lançar Contrato"):
+                    ts_venda = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
                     itens = [{"t": "À Vista", "v": val_t, "m": 0}] if parc == 0 else []
                     if parc > 0:
                         if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
