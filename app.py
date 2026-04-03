@@ -9,7 +9,7 @@ from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
 # --- 1. CONFIGURAÇÕES ---
-st.set_page_config(page_title="Sistema Comercial PRO", layout="wide")
+st.set_page_config(page_title="ERP Comercial PRO", layout="wide")
 
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_VENDAS = "1045730969"
@@ -63,57 +63,72 @@ else:
 
     # --- 3. DASHBOARD EXECUTIVO ---
     if menu == "📊 Dashboard Executivo":
-        st.title("📊 Indicadores de Performance")
+        st.title("📊 Painel de Controle e Fluxo de Caixa")
         
         if not df.empty:
             df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             
-            # FILTROS SUPERIORES
-            with st.expander("🔍 Filtros de Relatório", expanded=True):
+            # FILTROS
+            with st.expander("🔍 Filtros de Análise", expanded=True):
                 f1, f2 = st.columns(2)
                 if perfil_admin:
-                    v_sel = f1.multiselect("Vendedor", df_dash['Vendedor'].unique())
+                    v_sel = f1.multiselect("Filtrar Vendedores", df_dash['Vendedor'].unique())
                     if v_sel: df_dash = df_dash[df_dash['Vendedor'].isin(v_sel)]
                 
                 m_list = sorted(df['Data_Sort'].unique())
-                m_sel = f2.select_slider("Período de Análise", options=m_list, value=(m_list[0], m_list[-1]))
+                m_sel = f2.select_slider("Período de Vencimento", options=m_list, value=(m_list[0], m_list[-1]))
                 df_dash = df_dash[(df_dash['Data_Sort'] >= m_sel[0]) & (df_dash['Data_Sort'] <= m_sel[1])]
 
-            # KPIs SÓBRIOS
-            st.markdown("### Resumo Financeiro")
+            # KPIs
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Provisionado Total", f"R$ {df_dash['Val_N'].sum():,.2f}")
-            k2.metric("Recebido (Pago)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}", delta_color="normal")
-            k3.metric("Futuro (Pendente)", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
-            k4.metric("Comissões", f"R$ {df_dash['Com_N'].sum():,.2f}")
+            k1.metric("Faturamento Previsto", f"R$ {df_dash['Val_N'].sum():,.2f}")
+            k2.metric("Total Realizado (Pago)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}")
+            k3.metric("Saldo em Aberto", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
+            k4.metric("Comissões Totais", f"R$ {df_dash['Com_N'].sum():,.2f}")
 
             st.divider()
 
-            # GRÁFICOS PROFISSIONAIS
-            c1, c2 = st.columns([2, 1])
+            # LINHA DE GRÁFICOS 1 (PROVISÃO E STATUS)
+            g1, g2 = st.columns([2, 1])
             
-            # Gráfico de Provisão Mensal (Provisionado vs Recebido)
-            df_mes = df_dash.groupby(['Mes_Ano', 'Status', 'Data_Sort'])['Val_N'].sum().reset_index().sort_values('Data_Sort')
-            fig_bar = px.bar(df_mes, x='Mes_Ano', y='Val_N', color='Status', 
-                             title="Previsão de Recebimento Mensal",
-                             color_discrete_map={'Pago': '#1f77b4', 'Pendente': '#d3d3d3'},
-                             barmode='group', text_auto='.2s')
-            fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#555")
-            c1.plotly_chart(fig_bar, use_container_width=True)
+            with g1:
+                # Gráfico de Barras Mensal (O atual que você gosta)
+                df_mes = df_dash.groupby(['Mes_Ano', 'Status', 'Data_Sort'])['Val_N'].sum().reset_index().sort_values('Data_Sort')
+                fig_bar = px.bar(df_mes, x='Mes_Ano', y='Val_N', color='Status', 
+                                 title="Previsão de Recebimento por Mês",
+                                 color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#A9A9A9'},
+                                 barmode='group', text_auto='.2s')
+                fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_bar, use_container_width=True)
 
-            # Distribuição por Tipo de Contrato
-            fig_pie = px.pie(df_dash, values='Val_N', names='Tipo', hole=0.5, 
-                             title="Mix de Contratos",
-                             color_discrete_sequence=px.colors.qualitative.Prism)
-            fig_pie.update_layout(showlegend=False)
-            c2.plotly_chart(fig_pie, use_container_width=True)
+            with g2:
+                # NOVO GRÁFICO DE PIZZA (SOLICITADO)
+                # Mostra o percentual de Pago vs Aberto no período selecionado
+                fig_pizza_status = px.pie(df_dash, values='Val_N', names='Status', 
+                                          title="Saúde da Carteira (Pago vs Aberto)",
+                                          color='Status',
+                                          color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#E74C3C'},
+                                          hole=0.4)
+                fig_pizza_status.update_traces(textinfo='percent+label')
+                st.plotly_chart(fig_pizza_status, use_container_width=True)
 
-            st.markdown("### Detalhamento das Transações")
-            st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Data_Sort', 'Mes_Ano']), use_container_width=True)
+            # LINHA DE GRÁFICOS 2 (MIX DE CONTRATOS)
+            st.divider()
+            c1, c2 = st.columns([1, 2])
+            
+            with c1:
+                fig_mix = px.pie(df_dash, values='Val_N', names='Tipo', hole=0.5, 
+                                 title="Mix de Contratos",
+                                 color_discrete_sequence=px.colors.qualitative.Prism)
+                st.plotly_chart(fig_mix, use_container_width=True)
+            
+            with c2:
+                st.markdown("### Detalhamento dos Lançamentos")
+                st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Data_Sort', 'Mes_Ano']), use_container_width=True)
         else:
-            st.info("Nenhum dado encontrado.")
+            st.info("Aguardando dados para gerar o Dashboard...")
 
-    # --- 4. GESTÃO DE VENDAS ---
+    # --- 4. GESTÃO DE VENDAS (LANÇAR E EDITAR) ---
     elif menu == "📝 Gestão de Vendas":
         st.title("📝 Central de Contratos")
         acao = st.radio("Operação:", ["Novo Lançamento", "Editar/Corrigir"], horizontal=True)
@@ -139,14 +154,14 @@ else:
                         venc = (dt_v + relativedelta(months=it['m'])).strftime('%d/%m/%Y')
                         pld = {"entry.1532857351": cli, "entry.1279554151": vend, "entry.1633578859": it['t'], "entry.366765493": venc, "entry.1610537227": str(round(it['v'],2)).replace('.',','), "entry.1726017566": str(round(it['v']*0.05,2)).replace('.',','), "entry.622689505": "Pendente"}
                         requests.post(FORM_URL, data=pld)
-                    st.success("Enviado com sucesso!"); time.sleep(1); st.rerun()
+                    st.success("Lançado com sucesso!"); time.sleep(1); st.rerun()
         else:
-            busca = st.text_input("🔍 Buscar Cliente para editar...")
+            busca = st.text_input("🔍 Buscar Cliente...")
             df_edit = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             if busca: df_edit = df_edit[df_edit['Cliente'].str.contains(busca, case=False, na=False)]
             
             if not df_edit.empty:
-                escolha = st.selectbox("Selecione o registro:", df_edit.index, format_func=lambda x: f"L{x+2} | {df_edit.loc[x, 'Cliente']} | {df_edit.loc[x, 'Tipo']}")
+                escolha = st.selectbox("Selecione para editar:", df_edit.index, format_func=lambda x: f"L{x+2} | {df_edit.loc[x, 'Cliente']} | {df_edit.loc[x, 'Tipo']}")
                 item = df_edit.loc[escolha]
                 with st.form("edit_form"):
                     c1, c2 = st.columns(2)
@@ -164,7 +179,7 @@ else:
 
     # --- 5. BAIXAS E WHATSAPP ---
     elif menu == "✅ Baixar Pagamentos":
-        st.title("✅ Baixas Financeiras")
+        st.title("✅ Conciliação Financeira")
         if not perfil_admin: st.error("Acesso restrito."); st.stop()
 
         if st.session_state['venda_baixada']:
@@ -174,7 +189,7 @@ else:
             
             if not v_info.empty:
                 tel = str(v_info.iloc[0]['telefone']).replace(".0", "").replace("+", "").strip()
-                msg = urllib.parse.quote(f"✅ *PAGAMENTO CONFIRMADO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado. 🚀")
+                msg = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado no portal. 🚀")
                 link = f"https://api.whatsapp.com/send?phone={tel}&text={msg}"
                 st.markdown(f'<a href="{link}" target="_blank" style="text-decoration:none;"><div style="background-color:#25D366;color:white;padding:18px;text-align:center;border-radius:12px;font-weight:bold;font-size:22px;">🟢 ENVIAR WHATSAPP PARA {row_r["Vendedor"]}</div></a>', unsafe_allow_html=True)
             
