@@ -9,7 +9,7 @@ st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
 
 # Dados que você me forneceu (Linhas 10, 11 e 12)
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
-GID_USUARIOS = "1357723875" 
+GID_USUARIOS = "1045730969" 
 GID_VENDAS = "0"   
 
 # URL do seu Google Forms para gravação automática
