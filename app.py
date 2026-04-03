@@ -5,7 +5,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
 
 # 2. Conexão com a Planilha (COLE SEU LINK AQUI)
-URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 
 st.title("🚀 Sistema Comercial - Teste de Conexão")
 
