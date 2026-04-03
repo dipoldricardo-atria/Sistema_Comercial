@@ -1,25 +1,23 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
-# 1. Configuração de Tela
-st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
+st.title("🔍 Teste de Conexão Direta")
 
-# 2. Conexão com a Planilha (COLE SEU LINK AQUI)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
+# COLE O SEU LINK AQUI
+URL = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 
-st.title("🚀 Sistema Comercial - Teste de Conexão")
-
+# Comando para transformar o link normal em um link de download de dados
 try:
-    # Cria a ponte com o Google Sheets
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    csv_url = URL.replace('/edit?usp=sharing', '/export?format=csv&gid=0')
+    # Se a aba 'usuarios' não for a primeira, precisaremos do GID dela, 
+    # mas vamos testar com a primeira aba primeiro.
     
-    # Tenta ler a aba de usuários
-    df_usuarios = conn.read(spreadsheet=URL_PLANILHA, worksheet="usuarios")
-    
-    st.success("✅ Conexão com o Google Sheets estabelecida!")
-    st.subheader("Lista de Usuários Cadastrados:")
-    st.dataframe(df_usuarios)
-    
+    df = pd.read_csv(csv_url)
+    st.success("✅ Conexão Direta Funcionou!")
+    st.write("Dados encontrados na primeira aba:")
+    st.dataframe(df)
+
 except Exception as e:
-    st.error("❌ Erro na conexão.")
-    st.write(f"Detalhes: {e}")
+    st.error("❌ A conexão falhou novamente.")
+    st.write(f"O erro técnico é: {e}")
+    st.info("Dica: Verifique se o link da planilha está como 'Qualquer pessoa com o link'.")
