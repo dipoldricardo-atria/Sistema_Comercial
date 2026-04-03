@@ -1,46 +1,54 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
 
-# --- 1. CONFIGURAÇÃO INICIAL ---
-st.set_page_config(page_title="Gestão Comercial Tech", layout="wide")
-
-# COLE O LINK DA SUA PLANILHA AQUI (Certifique-se que termina em /edit?usp=sharing)
+# --- CONFIGURAÇÃO ---
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 
-# Função para converter link do Google em link de leitura direta (CSV)
-def get_google_sheet(url, gid="0"):
-    return url.replace('/edit?usp=sharing', f'/export?format=csv&gid={gid}')
+# INSIRA AQUI OS GIDs QUE VOCÊ ENCONTROU NA URL DA PLANILHA
+GID_USUARIOS = "1357723875" 
+GID_VENDAS = "0" # Geralmente a primeira aba é 0, mas confirme na URL
 
-# --- 2. SISTEMA DE LOGIN ---
+def get_google_sheet(url, gid):
+    # Esta função garante que o Python foque na aba correta
+    base_url = url.split('/edit')[0]
+    return f"{base_url}/export?format=csv&gid={gid}"
+
+# --- SISTEMA DE LOGIN ATUALIZADO ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 def tela_login():
     st.title("🚀 Portal Comercial - Empresa Tech")
     with st.sidebar:
-        st.subheader("Acesso Interno")
-        email_input = st.text_input("E-mail")
+        st.subheader("Login de Acesso")
+        email_input = st.text_input("E-mail").strip().lower() # Remove espaços e deixa minúsculo
         senha_input = st.text_input("Senha", type="password")
+        
         if st.button("Entrar"):
             try:
-                # GID da aba 'usuarios' (normalmente a segunda aba tem um GID diferente, 
-                # mas vamos tentar ler a principal para validar o acesso)
-                df_users = pd.read_csv(get_google_sheet(URL_BASE))
-                user = df_users[(df_users['email'] == email_input) & (df_users['senha'].astype(str) == senha_input)]
+                # Lendo especificamente a aba de usuários usando o GID
+                link_usuarios = get_google_sheet(URL_BASE, GID_USUARIOS)
+                df_users = pd.read_csv(link_usuarios)
+                
+                # Limpeza de dados para evitar erro de comparação
+                df_users['email'] = df_users['email'].str.strip().str.lower()
+                df_users['senha'] = df_users['senha'].astype(str).str.strip()
+                
+                user = df_users[(df_users['email'] == email_input) & (df_users['senha'] == str(senha_input))]
                 
                 if not user.empty:
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = user.iloc[0]
                     st.rerun()
                 else:
-                    st.error("Usuário ou senha incorretos.")
-            except:
-                st.error("Erro ao acessar base de usuários. Verifique a planilha.")
+                    st.error("Usuário ou senha não encontrados na aba 'usuarios'.")
+            except Exception as e:
+                st.error(f"Erro técnico: {e}")
+                st.info("Verifique se o nome das colunas na aba 'usuarios' são: email, senha, nome, perfil")
 
 if not st.session_state['logged_in']:
     tela_login()
+# ... (restante do código segue igual)
 else:
     user = st.session_state['user_info']
     st.sidebar.success(f"Olá, {user['nome']}")
