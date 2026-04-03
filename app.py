@@ -55,77 +55,79 @@ else:
         df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
         df['Val_N'] = df['Valor'].apply(limpar_financeiro)
         df['Com_N'] = df['Comissao'].apply(limpar_financeiro)
+        
+        # Identificar Data Base: A Data Base é o vencimento da Entrada ou da Parcela única (mês 0)
+        # Como o sistema gera parcelas sequenciais, a menor data de vencimento de um mesmo TS é a Data Base.
         df['Data_Venc'] = pd.to_datetime(df['Vencimento'], dayfirst=True)
-        df['Mes_Ano'] = df['Data_Venc'].dt.strftime('%m/%Y')
-        df['Data_Sort'] = df['Data_Venc'].dt.to_period('M')
+        
+        # Criamos a referência de Data do Contrato (Menor Vencimento por Venda/TS)
+        df['Data_Contrato'] = df.groupby('TS')['Data_Venc'].transform('min')
+        df['Mes_Contrato'] = df['Data_Contrato'].dt.to_period('M')
+        df['Mes_Vencimento'] = df['Data_Venc'].dt.to_period('M')
     except: df = pd.DataFrame()
 
     # --- 3. DASHBOARD EXECUTIVO ---
     if menu == "📊 Dashboard Executivo":
-        st.title("📊 Painel de Controle e Fluxo de Caixa")
+        st.title("📊 Dashboard de Performance Real")
         
         if not df.empty:
             df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             
-            # FILTROS
-            with st.expander("🔍 Filtros de Análise", expanded=True):
+            # FILTROS SÓBRIOS
+            with st.expander("🔍 Critérios de Filtragem", expanded=True):
+                tipo_filtro = st.radio("Analisar por:", ["Mês de Fechamento (Data Base)", "Mês de Vencimento (Fluxo de Caixa)"], horizontal=True)
+                
                 f1, f2 = st.columns(2)
                 if perfil_admin:
-                    v_sel = f1.multiselect("Filtrar Vendedores", df_dash['Vendedor'].unique())
+                    v_sel = f1.multiselect("Vendedores", df_dash['Vendedor'].unique())
                     if v_sel: df_dash = df_dash[df_dash['Vendedor'].isin(v_sel)]
                 
-                m_list = sorted(df['Data_Sort'].unique())
-                m_sel = f2.select_slider("Período de Vencimento (Parcelas)", options=m_list, value=(m_list[0], m_list[-1]))
-                df_dash = df_dash[(df_dash['Data_Sort'] >= m_sel[0]) & (df_dash['Data_Sort'] <= m_sel[1])]
+                col_data = 'Mes_Contrato' if tipo_filtro == "Mês de Fechamento (Data Base)" else 'Mes_Vencimento'
+                m_list = sorted(df[col_data].unique())
+                m_sel = f2.select_slider("Selecione o Período", options=m_list, value=(m_list[0], m_list[-1]))
+                df_dash_filtrado = df_dash[(df_dash[col_data] >= m_sel[0]) & (df_dash[col_data] <= m_sel[1])]
 
-            # --- CORREÇÃO DA MÉTRICA DE CONTRATOS ---
-            # Agrupamos por Timestamp (TS), Cliente e Vendedor para pegar o valor total real do contrato fechado
-            df_contratos_unicos = df_dash.groupby(['TS', 'Cliente', 'Vendedor']).agg({'Val_N': 'sum'}).reset_index()
-            total_contratado_real = df_contratos_unicos['Val_N'].sum()
+            # --- CÁLCULO DE FATURAMENTO REAL ---
+            # Soma o valor total de cada contrato (TS único) que caiu no filtro de Data Base
+            faturamento_bruto = df_dash_filtrado.groupby('TS')['Val_N'].sum().sum()
 
-            # KPIs
-            st.markdown("### 💎 Resumo de Negócios")
+            # KPIs EXECUTIVOS
+            st.markdown(f"### 💎 Resultados do Período ({m_sel[0]} a {m_sel[1]})")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Valor Total Contratos", f"R$ {total_contratado_real:,.2f}") 
-            m2.metric("Recebido (Em Caixa)", f"R$ {df_dash[df_dash['Status']=='Pago']['Val_N'].sum():,.2f}")
-            m3.metric("Saldo a Receber", f"R$ {df_dash[df_dash['Status']=='Pendente']['Val_N'].sum():,.2f}")
-            m4.metric("Comissões Totais", f"R$ {df_dash['Com_N'].sum():,.2f}")
+            m1.metric("Valor Faturado (Contratos)", f"R$ {faturamento_bruto:,.2f}", help="Soma dos contratos baseada na Data Base de lançamento.") 
+            m2.metric("Recebido (Caixa)", f"R$ {df_dash_filtrado[df_dash_filtrado['Status']=='Pago']['Val_N'].sum():,.2f}")
+            m3.metric("Pendente (A Receber)", f"R$ {df_dash_filtrado[df_dash_filtrado['Status']=='Pendente']['Val_N'].sum():,.2f}")
+            m4.metric("Comissões Totais", f"R$ {df_dash_filtrado['Com_N'].sum():,.2f}")
 
             st.divider()
 
-            # LINHA DE GRÁFICOS 1 (PROVISÃO MENSAL)
-            st.markdown("### 📈 Previsão de Recebimentos (Fluxo de Caixa)")
-            df_mes = df_dash.groupby(['Mes_Ano', 'Status', 'Data_Sort'])['Val_N'].sum().reset_index().sort_values('Data_Sort')
-            fig_bar = px.bar(df_mes, x='Mes_Ano', y='Val_N', color='Status', 
-                             color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#A9A9A9'},
-                             barmode='group', text_auto='.2s', height=350)
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-            # LINHA DE GRÁFICOS 2 (PIZZAS)
-            st.divider()
-            st.markdown("### 📉 Distribuição e Saúde da Carteira")
-            p1, p2 = st.columns(2)
+            # GRÁFICOS DE ALTO NÍVEL
+            c1, c2 = st.columns([2, 1])
             
-            with p1:
-                fig_saude = px.pie(df_dash, values='Val_N', names='Status', 
-                                   title="Status Geral das Parcelas (Pago vs Pendente)",
-                                   color='Status',
-                                   color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#E74C3C'},
-                                   hole=0.4)
+            with c1:
+                st.markdown("### 📈 Provisão Mensal de Recebimentos")
+                df_mes = df_dash_filtrado.groupby([df_dash_filtrado['Data_Venc'].dt.strftime('%m/%Y'), 'Status', 'Mes_Vencimento'])['Val_N'].sum().reset_index().sort_values('Mes_Vencimento')
+                fig_bar = px.bar(df_mes, x='Data_Venc', y='Val_N', color='Status', 
+                                 color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#A9A9A9'},
+                                 barmode='group', text_auto='.2s', height=400)
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with c2:
+                st.markdown("### 📉 Saúde Financeira")
+                fig_saude = px.pie(df_dash_filtrado, values='Val_N', names='Status', 
+                                   color='Status', color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#E74C3C'}, hole=0.5)
+                fig_saude.update_layout(showlegend=False)
                 st.plotly_chart(fig_saude, use_container_width=True)
 
-            with p2:
-                fig_mix = px.pie(df_dash, values='Val_N', names='Tipo', 
-                                 title="Mix de Contratos (Tipos de Venda)",
-                                 hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Prism)
-                st.plotly_chart(fig_mix, use_container_width=True)
-
             st.divider()
-            st.markdown("### 📋 Listagem Detalhada de Parcelas")
-            st.dataframe(df_dash.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Data_Sort', 'Mes_Ano']), use_container_width=True)
+            st.markdown("### 📋 Composição da Receita (Mix)")
+            fig_mix = px.pie(df_dash_filtrado, values='Val_N', names='Tipo', hole=0.4)
+            st.plotly_chart(fig_mix, use_container_width=True)
+            
+            st.markdown("### 📋 Tabela Detalhada de Parcelas")
+            st.dataframe(df_dash_filtrado.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Mes_Contrato', 'Mes_Vencimento', 'Data_Contrato']), use_container_width=True)
         else:
-            st.info("Aguardando dados para gerar o Dashboard...")
+            st.info("Aguardando dados para gerar indicadores.")
 
     # --- 4. GESTÃO DE VENDAS ---
     elif menu == "📝 Gestão de Vendas":
@@ -140,10 +142,9 @@ else:
                 val_t = c1.number_input("Valor Total", min_value=0.0)
                 ent = c2.number_input("Entrada", min_value=0.0)
                 parc = c1.number_input("Parcelas (0=Vista)", 0, 120)
-                dt_v = c2.date_input("Data Base")
+                dt_v = c2.date_input("Data Base (Data do Fechamento)") # ESTA É A DATA QUE REGE O DASHBOARD AGORA
                 
                 if st.form_submit_button("🚀 Lançar Contrato"):
-                    ts_venda = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
                     itens = [{"t": "À Vista", "v": val_t, "m": 0}] if parc == 0 else []
                     if parc > 0:
                         if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
@@ -154,9 +155,9 @@ else:
                         venc = (dt_v + relativedelta(months=it['m'])).strftime('%d/%m/%Y')
                         pld = {"entry.1532857351": cli, "entry.1279554151": vend, "entry.1633578859": it['t'], "entry.366765493": venc, "entry.1610537227": str(round(it['v'],2)).replace('.',','), "entry.1726017566": str(round(it['v']*0.05,2)).replace('.',','), "entry.622689505": "Pendente"}
                         requests.post(FORM_URL, data=pld)
-                    st.success("Lançado!"); time.sleep(1); st.rerun()
+                    st.success("Lançamento concluído!"); time.sleep(1); st.rerun()
         else:
-            busca = st.text_input("🔍 Buscar Cliente para editar...")
+            busca = st.text_input("🔍 Buscar Cliente...")
             df_edit = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             if busca: df_edit = df_edit[df_edit['Cliente'].str.contains(busca, case=False, na=False)]
             
@@ -168,11 +169,11 @@ else:
                     e_cli = c1.text_input("Cliente", item['Cliente'])
                     e_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores'], index=st.session_state['lista_vendedores'].index(item['Vendedor']) if item['Vendedor'] in st.session_state['lista_vendedores'] else 0) if perfil_admin else c2.text_input("Vendedor", item['Vendedor'], disabled=True)
                     e_tipo = c1.text_input("Tipo", item['Tipo'])
-                    e_venc = c2.text_input("Vencimento", item['Vencimento'])
+                    e_venc = c2.text_input("Vencimento (DD/MM/YYYY)", item['Vencimento'])
                     e_val = c1.text_input("Valor", item['Valor'])
                     e_com = c2.text_input("Comissão", item['Comissao'])
                     e_stat = st.selectbox("Status", ["Pendente", "Pago"], index=0 if item['Status']=="Pendente" else 1)
-                    if st.form_submit_button("💾 Salvar"):
+                    if st.form_submit_button("💾 Salvar Alterações"):
                         params = {"row": escolha+2, "cliente": e_cli, "vendedor": e_vend, "tipo": e_tipo, "vencimento": e_venc, "valor": e_val, "comissao": e_com, "status": e_stat}
                         requests.get(SCRIPT_URL, params=params)
                         st.success("Atualizado!"); time.sleep(1); st.rerun()
@@ -189,7 +190,7 @@ else:
             
             if not v_info.empty:
                 tel = str(v_info.iloc[0]['telefone']).replace(".0", "").replace("+", "").strip()
-                msg = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado no portal. 🚀")
+                msg = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado. 🚀")
                 link = f"https://api.whatsapp.com/send?phone={tel}&text={msg}"
                 st.markdown(f'<a href="{link}" target="_blank" style="text-decoration:none;"><div style="background-color:#25D366;color:white;padding:18px;text-align:center;border-radius:12px;font-weight:bold;font-size:22px;">🟢 ENVIAR WHATSAPP PARA {row_r["Vendedor"]}</div></a>', unsafe_allow_html=True)
             
