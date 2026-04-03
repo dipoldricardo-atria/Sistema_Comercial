@@ -4,16 +4,17 @@ import requests
 import time
 import urllib.parse
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
 # --- 1. CONFIGURAÇÕES ---
 st.set_page_config(page_title="ERP Comercial PRO", layout="wide")
 
+URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_VENDAS = "1045730969"
 GID_USUARIOS = "1357723875"
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwOR4tCPLwpmn28h4TqG-hz4HxM5APUhoZ00TgQ6SVz6rSs79r1rixjmw9K6CoRJFdI/exec"
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwOR4tCPLwpmn28h4TqG-hz4HxM5APUhoZ00TgQ6SVz6rSs79r1rixjmw9K6CoRJFdI/exec"
 
 def carregar_dados(gid):
     url = f"https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/export?format=csv&gid={gid}&t={int(time.time())}"
@@ -25,8 +26,9 @@ def limpar_financeiro(val):
         return float(val)
     except: return 0.0
 
-# --- 2. CONTROLE DE SESSÃO E LOGIN ---
+# --- 2. CONTROLE DE SESSÃO ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'venda_baixada' not in st.session_state: st.session_state['venda_baixada'] = None
 
 if not st.session_state['logged_in']:
     st.title("🚀 Portal Comercial - Login")
@@ -47,97 +49,160 @@ else:
     menu = st.sidebar.radio("Navegação", ["📊 Dashboard Executivo", "📝 Gestão de Vendas", "✅ Baixar Pagamentos"])
     if st.sidebar.button("Sair"): st.session_state.clear(); st.rerun()
 
-    # --- 3. PROCESSAMENTO DOS DADOS (CÁLCULO DE FATURAMENTO) ---
+    # Carregamento e Tratamento de Dados
     try:
-        df_raw = carregar_dados(GID_VENDAS)
-        df_raw.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
-        df_raw['Val_N'] = df_raw['Valor'].apply(limpar_financeiro)
-        df_raw['Data_Venc'] = pd.to_datetime(df_raw['Vencimento'], dayfirst=True)
+        df = carregar_dados(GID_VENDAS)
+        df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
+        df['Val_N'] = df['Valor'].apply(limpar_financeiro)
+        df['Com_N'] = df['Comissao'].apply(limpar_financeiro)
         
-        # AGREGADOR DE CONTRATOS: Agrupamos pelo TS (ID único da venda)
-        # O Faturamento Total de um contrato é a soma de suas parcelas (Valor Total do Contrato)
-        # A Data Base é a data do primeiro vencimento daquele TS
-        df_vendas_consolidadas = df_raw.groupby('TS').agg({
-            'Val_N': 'sum',
-            'Data_Venc': 'min',
-            'Cliente': 'first',
-            'Vendedor': 'first',
-            'Tipo': 'first'
-        }).reset_index().rename(columns={'Val_N': 'Valor_Total_Contrato', 'Data_Venc': 'Data_Base'})
+        # Identificar Data Base: A Data Base é o vencimento da Entrada ou da Parcela única (mês 0)
+        # Como o sistema gera parcelas sequenciais, a menor data de vencimento de um mesmo TS é a Data Base.
+        df['Data_Venc'] = pd.to_datetime(df['Vencimento'], dayfirst=True)
         
-        df_vendas_consolidadas['Mes_Base'] = df_vendas_consolidadas['Data_Base'].dt.to_period('M')
-        df_raw['Mes_Vencimento'] = df_raw['Data_Venc'].dt.to_period('M')
-    except: df_raw = pd.DataFrame(); df_vendas_consolidadas = pd.DataFrame()
+        # Criamos a referência de Data do Contrato (Menor Vencimento por Venda/TS)
+        df['Data_Contrato'] = df.groupby('TS')['Data_Venc'].transform('min')
+        df['Mes_Contrato'] = df['Data_Contrato'].dt.to_period('M')
+        df['Mes_Vencimento'] = df['Data_Venc'].dt.to_period('M')
+    except: df = pd.DataFrame()
 
-    # --- 4. DASHBOARD EXECUTIVO ---
+    # --- 3. DASHBOARD EXECUTIVO ---
     if menu == "📊 Dashboard Executivo":
-        st.title("📊 Gestão Comercial e Financeira")
+        st.title("📊 Dashboard de Performance Real")
         
-        if not df_vendas_consolidadas.empty:
-            # Filtros
-            with st.expander("🔍 Filtros do Dashboard", expanded=True):
-                m_list = sorted(df_vendas_consolidadas['Mes_Base'].unique())
-                m_sel = st.select_slider("Período de Fechamento (Data Base)", options=m_list, value=(m_list[0], m_list[-1]))
-                
-                df_contratos_f = df_vendas_consolidadas[(df_vendas_consolidadas['Mes_Base'] >= m_sel[0]) & (df_vendas_consolidadas['Mes_Base'] <= m_sel[1])]
-                df_parcelas_f = df_raw[(df_raw['Mes_Vencimento'] >= m_sel[0]) & (df_raw['Mes_Vencimento'] <= m_sel[1])]
-                
-                if not perfil_admin:
-                    df_contratos_f = df_contratos_f[df_contratos_f['Vendedor'] == user['nome']]
-                    df_parcelas_f = df_parcelas_f[df_parcelas_f['Vendedor'] == user['nome']]
-
-            # KPIs
-            st.divider()
-            k1, k2, k3 = st.columns(3)
-            # AQUI ESTÁ O QUE O SENHOR PEDIU: Soma do Valor Total dos Contratos no período da Data Base
-            k1.metric("💰 Faturamento Total (Contratos)", f"R$ {df_contratos_f['Valor_Total_Contrato'].sum():,.2f}")
-            k2.metric("✅ Recebido (Caixa)", f"R$ {df_parcelas_f[df_parcelas_f['Status']=='Pago']['Val_N'].sum():,.2f}")
-            k3.metric("⏳ Pendente no Período", f"R$ {df_parcelas_f[df_parcelas_f['Status']=='Pendente']['Val_N'].sum():,.2f}")
-
-            # TABELA DE CONTRATOS REAIS
-            st.subheader("📝 Contratos Fechados no Período")
-            st.dataframe(df_contratos_f[['Data_Base', 'Cliente', 'Vendedor', 'Valor_Total_Contrato', 'Tipo']], use_container_width=True)
-
-            # GRÁFICO DE FLUXO
-            st.subheader("📈 Provisão de Recebimentos")
-            fig = px.bar(df_parcelas_f.groupby(['Mes_Vencimento', 'Status'])['Val_N'].sum().reset_index(), 
-                         x='Mes_Vencimento', y='Val_N', color='Status', barmode='group',
-                         color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#A9A9A9'})
-            st.plotly_chart(fig, use_container_width=True)
-
-    # --- 5. GESTÃO DE VENDAS (LANÇAMENTO) ---
-    elif menu == "📝 Gestão de Vendas":
-        st.title("📝 Lançamento de Novos Contratos")
-        with st.form("form_venda", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            f_cli = c1.text_input("Cliente")
-            f_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores']) if perfil_admin else c2.text_input("Vendedor", user['nome'], disabled=True)
-            f_valor = c1.number_input("Valor Total do Contrato", min_value=0.0)
-            f_ent = c2.number_input("Entrada", min_value=0.0)
-            f_parc = c1.number_input("Parcelas", 0, 60)
-            f_data = c2.date_input("Data Base (Data da Venda)")
+        if not df.empty:
+            df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             
-            if st.form_submit_button("🚀 Registrar Contrato"):
-                # Lógica de parcelamento
-                parcelas = []
-                if f_parc == 0: parcelas.append({"t": "À Vista", "v": f_valor, "m": 0})
-                else:
-                    if f_ent > 0: parcelas.append({"t": "Entrada", "v": f_ent, "m": 0})
-                    v_p = (f_valor - f_ent) / f_parc
-                    for i in range(1, int(f_parc)+1): parcelas.append({"t": f"Parc {i}/{int(f_parc)}", "v": v_p, "m": i})
+            # FILTROS SÓBRIOS
+            with st.expander("🔍 Critérios de Filtragem", expanded=True):
+                tipo_filtro = st.radio("Analisar por:", ["Mês de Fechamento (Data Base)", "Mês de Vencimento (Fluxo de Caixa)"], horizontal=True)
                 
-                for p in parcelas:
-                    venc = (f_data + relativedelta(months=p['m'])).strftime('%d/%m/%Y')
-                    dados = {"entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": p['t'], "entry.366765493": venc, "entry.1610537227": str(round(p['v'],2)).replace('.',','), "entry.1726017566": "0", "entry.622689505": "Pendente"}
-                    requests.post(FORM_URL, data=dados)
-                st.success("Venda registrada!"); time.sleep(1); st.rerun()
+                f1, f2 = st.columns(2)
+                if perfil_admin:
+                    v_sel = f1.multiselect("Vendedores", df_dash['Vendedor'].unique())
+                    if v_sel: df_dash = df_dash[df_dash['Vendedor'].isin(v_sel)]
+                
+                col_data = 'Mes_Contrato' if tipo_filtro == "Mês de Fechamento (Data Base)" else 'Mes_Vencimento'
+                m_list = sorted(df[col_data].unique())
+                m_sel = f2.select_slider("Selecione o Período", options=m_list, value=(m_list[0], m_list[-1]))
+                df_dash_filtrado = df_dash[(df_dash[col_data] >= m_sel[0]) & (df_dash[col_data] <= m_sel[1])]
 
-    # --- 6. BAIXAS ---
+            # --- CÁLCULO DE FATURAMENTO REAL ---
+            # Soma o valor total de cada contrato (TS único) que caiu no filtro de Data Base
+            faturamento_bruto = df_dash_filtrado.groupby('TS')['Val_N'].sum().sum()
+
+            # KPIs EXECUTIVOS
+            st.markdown(f"### 💎 Resultados do Período ({m_sel[0]} a {m_sel[1]})")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Valor Faturado (Contratos)", f"R$ {faturamento_bruto:,.2f}", help="Soma dos contratos baseada na Data Base de lançamento.") 
+            m2.metric("Recebido (Caixa)", f"R$ {df_dash_filtrado[df_dash_filtrado['Status']=='Pago']['Val_N'].sum():,.2f}")
+            m3.metric("Pendente (A Receber)", f"R$ {df_dash_filtrado[df_dash_filtrado['Status']=='Pendente']['Val_N'].sum():,.2f}")
+            m4.metric("Comissões Totais", f"R$ {df_dash_filtrado['Com_N'].sum():,.2f}")
+
+            st.divider()
+
+            # GRÁFICOS DE ALTO NÍVEL
+            c1, c2 = st.columns([2, 1])
+            
+            with c1:
+                st.markdown("### 📈 Provisão Mensal de Recebimentos")
+                df_mes = df_dash_filtrado.groupby([df_dash_filtrado['Data_Venc'].dt.strftime('%m/%Y'), 'Status', 'Mes_Vencimento'])['Val_N'].sum().reset_index().sort_values('Mes_Vencimento')
+                fig_bar = px.bar(df_mes, x='Data_Venc', y='Val_N', color='Status', 
+                                 color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#A9A9A9'},
+                                 barmode='group', text_auto='.2s', height=400)
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with c2:
+                st.markdown("### 📉 Saúde Financeira")
+                fig_saude = px.pie(df_dash_filtrado, values='Val_N', names='Status', 
+                                   color='Status', color_discrete_map={'Pago': '#2E5A88', 'Pendente': '#E74C3C'}, hole=0.5)
+                fig_saude.update_layout(showlegend=False)
+                st.plotly_chart(fig_saude, use_container_width=True)
+
+            st.divider()
+            st.markdown("### 📋 Composição da Receita (Mix)")
+            fig_mix = px.pie(df_dash_filtrado, values='Val_N', names='Tipo', hole=0.4)
+            st.plotly_chart(fig_mix, use_container_width=True)
+            
+            st.markdown("### 📋 Tabela Detalhada de Parcelas")
+            st.dataframe(df_dash_filtrado.drop(columns=['Val_N', 'Com_N', 'Data_Venc', 'Mes_Contrato', 'Mes_Vencimento', 'Data_Contrato']), use_container_width=True)
+        else:
+            st.info("Aguardando dados para gerar indicadores.")
+
+    # --- 4. GESTÃO DE VENDAS ---
+    elif menu == "📝 Gestão de Vendas":
+        st.title("📝 Central de Contratos")
+        acao = st.radio("Operação:", ["Novo Lançamento", "Editar/Corrigir"], horizontal=True)
+
+        if acao == "Novo Lançamento":
+            with st.form("novo_form", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                cli = c1.text_input("Cliente")
+                vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores']) if perfil_admin else c2.text_input("Vendedor", user['nome'], disabled=True)
+                val_t = c1.number_input("Valor Total", min_value=0.0)
+                ent = c2.number_input("Entrada", min_value=0.0)
+                parc = c1.number_input("Parcelas (0=Vista)", 0, 120)
+                dt_v = c2.date_input("Data Base (Data do Fechamento)") # ESTA É A DATA QUE REGE O DASHBOARD AGORA
+                
+                if st.form_submit_button("🚀 Lançar Contrato"):
+                    itens = [{"t": "À Vista", "v": val_t, "m": 0}] if parc == 0 else []
+                    if parc > 0:
+                        if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
+                        v_p = (val_t - ent) / parc
+                        for i in range(1, int(parc)+1): itens.append({"t": f"Parcela {i}/{int(parc)}", "v": v_p, "m": i})
+                    
+                    for it in itens:
+                        venc = (dt_v + relativedelta(months=it['m'])).strftime('%d/%m/%Y')
+                        pld = {"entry.1532857351": cli, "entry.1279554151": vend, "entry.1633578859": it['t'], "entry.366765493": venc, "entry.1610537227": str(round(it['v'],2)).replace('.',','), "entry.1726017566": str(round(it['v']*0.05,2)).replace('.',','), "entry.622689505": "Pendente"}
+                        requests.post(FORM_URL, data=pld)
+                    st.success("Lançamento concluído!"); time.sleep(1); st.rerun()
+        else:
+            busca = st.text_input("🔍 Buscar Cliente...")
+            df_edit = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
+            if busca: df_edit = df_edit[df_edit['Cliente'].str.contains(busca, case=False, na=False)]
+            
+            if not df_edit.empty:
+                escolha = st.selectbox("Selecione:", df_edit.index, format_func=lambda x: f"L{x+2} | {df_edit.loc[x, 'Cliente']} | {df_edit.loc[x, 'Tipo']}")
+                item = df_edit.loc[escolha]
+                with st.form("edit_form"):
+                    c1, c2 = st.columns(2)
+                    e_cli = c1.text_input("Cliente", item['Cliente'])
+                    e_vend = c2.selectbox("Vendedor", st.session_state['lista_vendedores'], index=st.session_state['lista_vendedores'].index(item['Vendedor']) if item['Vendedor'] in st.session_state['lista_vendedores'] else 0) if perfil_admin else c2.text_input("Vendedor", item['Vendedor'], disabled=True)
+                    e_tipo = c1.text_input("Tipo", item['Tipo'])
+                    e_venc = c2.text_input("Vencimento (DD/MM/YYYY)", item['Vencimento'])
+                    e_val = c1.text_input("Valor", item['Valor'])
+                    e_com = c2.text_input("Comissão", item['Comissao'])
+                    e_stat = st.selectbox("Status", ["Pendente", "Pago"], index=0 if item['Status']=="Pendente" else 1)
+                    if st.form_submit_button("💾 Salvar Alterações"):
+                        params = {"row": escolha+2, "cliente": e_cli, "vendedor": e_vend, "tipo": e_tipo, "vencimento": e_venc, "valor": e_val, "comissao": e_com, "status": e_stat}
+                        requests.get(SCRIPT_URL, params=params)
+                        st.success("Atualizado!"); time.sleep(1); st.rerun()
+
+    # --- 5. BAIXAS E WHATSAPP ---
     elif menu == "✅ Baixar Pagamentos":
-        st.title("✅ Baixa de Parcelas")
-        if not perfil_admin: st.error("Acesso restrito"); st.stop()
-        df_p = df_raw[df_raw['Status'] == 'Pendente']
-        for i, r in df_p.iterrows():
-            if st.button(f"Baixar: {r['Cliente']} - {r['Tipo']} (R$ {r['Valor']})", key=f"b_{i}"):
-                requests.get(f"{SCRIPT_URL}?row={i+2}&status=Pago")
-                st.success("OK!"); time.sleep(0.5); st.rerun()
+        st.title("✅ Conciliação Financeira")
+        if not perfil_admin: st.error("Acesso restrito."); st.stop()
+
+        if st.session_state['venda_baixada']:
+            row_r = st.session_state['venda_baixada']
+            st.success(f"📌 Pagamento de {row_r['Cliente']} confirmado!")
+            v_info = st.session_state['df_usuarios'][st.session_state['df_usuarios']['nome'] == row_r['Vendedor']]
+            
+            if not v_info.empty:
+                tel = str(v_info.iloc[0]['telefone']).replace(".0", "").replace("+", "").strip()
+                msg = urllib.parse.quote(f"✅ *PAGAMENTO RECEBIDO!*\n\n*Cliente:* {row_r['Cliente']}\n*Valor:* R$ {row_r['Valor']}\n*Tipo:* {row_r['Tipo']}\n\nStatus atualizado. 🚀")
+                link = f"https://api.whatsapp.com/send?phone={tel}&text={msg}"
+                st.markdown(f'<a href="{link}" target="_blank" style="text-decoration:none;"><div style="background-color:#25D366;color:white;padding:18px;text-align:center;border-radius:12px;font-weight:bold;font-size:22px;">🟢 ENVIAR WHATSAPP PARA {row_r["Vendedor"]}</div></a>', unsafe_allow_html=True)
+            
+            if st.button("🔙 Voltar para Lista"):
+                st.session_state['venda_baixada'] = None
+                st.rerun()
+            st.stop()
+
+        pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
+        for idx, row in pendentes.iterrows():
+            with st.expander(f"{row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
+                if st.button("Confirmar Recebimento", key=f"p_{idx}"):
+                    if "Sucesso" in requests.get(f"{SCRIPT_URL}?row={idx+2}&status=Pago").text:
+                        st.session_state['venda_baixada'] = row.to_dict()
+                        st.rerun()
