@@ -5,155 +5,101 @@ import time
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-# --- 1. CONFIGURAÇÕES INICIAIS ---
-st.set_page_config(page_title="Sistema de Gestão Comercial", layout="wide")
+# --- 1. CONFIGURAÇÕES ---
+st.set_page_config(page_title="Gestão Comercial", layout="wide")
 
 URL_BASE = "https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/edit?usp=sharing"
 GID_USUARIOS = "1357723875" 
 GID_VENDAS = "1045730969"   
-
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScWLZzEh2KOp1aqdjKkhTelImUTL4EJ7KZRr-aryX3N-92aBg/formResponse"
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbweRlD1BLcYkmwNCq3yJdttmtDaWlZkVu8kB837i9rSi97Wih9m_09SG_l3PSX_wzI/exec"
 
-def get_google_sheet(url, gid):
-    base_url = url.split('/edit')[0]
-    # Adicionamos um carimbo de tempo (t) para forçar o Google a ignorar o cache
-    return f"{base_url}/export?format=csv&gid={gid}&t={int(time.time())}"
+def get_sheet(gid):
+    # Cache busting com timestamp para evitar dados velhos
+    return f"https://docs.google.com/spreadsheets/d/1TUMWuy_EjuMgzMUuT3PUVCP3P-FQA8yDN0Hv4RK46SY/export?format=csv&gid={gid}&t={int(time.time())}"
 
 def limpar_financeiro(val):
     try:
-        if isinstance(val, str):
-            return float(val.replace('.', '').replace(',', '.'))
+        if isinstance(val, str): return float(val.replace('.', '').replace(',', '.'))
         return float(val)
-    except:
-        return 0.0
+    except: return 0.0
 
-# --- 2. LÓGICA DE LOGIN ---
+# --- 2. LOGIN ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
     st.title("🚀 Portal Comercial - Login")
     with st.sidebar:
-        email_input = st.text_input("E-mail").strip().lower()
-        senha_input = st.text_input("Senha", type="password")
+        u_in = st.text_input("E-mail").strip().lower()
+        s_in = st.text_input("Senha", type="password")
         if st.button("Entrar"):
-            try:
-                # Login sempre puxa dados frescos
-                df_users = pd.read_csv(get_google_sheet(URL_BASE, GID_USUARIOS))
-                df_users['email'] = df_users['email'].astype(str).str.strip().str.lower()
-                user = df_users[(df_users['email'] == email_input) & (df_users['senha'].astype(str) == str(senha_input))]
-                if not user.empty:
-                    st.session_state['logged_in'] = True
-                    st.session_state['user_info'] = user.iloc[0].to_dict()
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos.")
-            except Exception as e:
-                st.error(f"Erro de conexão: {e}")
+            df_u = pd.read_csv(get_sheet(GID_USUARIOS))
+            user = df_u[(df_u['email'].str.lower() == u_in) & (df_u['senha'].astype(str) == s_in)]
+            if not user.empty:
+                st.session_state['logged_in'] = True
+                st.session_state['user_info'] = user.iloc[0].to_dict()
+                st.rerun()
+            else: st.error("Erro de login.")
 else:
     user = st.session_state['user_info']
-    st.sidebar.success(f"Conectado: {user['nome']}")
-    
-    if user['perfil'] == "Admin":
-        menu = st.sidebar.radio("Navegação", ["📊 Dashboard", "📝 Cadastrar Venda", "✅ Baixa de Pagamentos"])
-    else:
-        menu = st.sidebar.radio("Navegação", ["💰 Minhas Comissões", "📝 Cadastrar Venda"])
-
+    st.sidebar.success(f"Olá, {user['nome']}")
+    menu = st.sidebar.radio("Menu", ["📊 Dashboard", "📝 Venda", "✅ Baixas"]) if user['perfil'] == "Admin" else st.sidebar.radio("Menu", ["💰 Comissões", "📝 Venda"])
     if st.sidebar.button("Sair"):
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- 3. CARREGAMENTO DE DADOS COM REFRESH FORÇADO ---
-    df_vendas = pd.DataFrame()
+    # --- 3. CARREGAR VENDAS ---
     try:
-        # Puxa os dados da planilha de vendas
-        df_vendas = pd.read_csv(get_google_sheet(URL_BASE, GID_VENDAS))
-        df_vendas.columns = ['Timestamp', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
-        df_vendas['Valor_Num'] = df_vendas['Valor'].apply(limpar_financeiro)
-        df_vendas['Com_Num'] = df_vendas['Comissao'].apply(limpar_financeiro)
-    except:
-        st.sidebar.info("Carregando base de dados...")
+        df = pd.read_csv(get_sheet(GID_VENDAS))
+        df.columns = ['ID', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissao', 'Status']
+        df['Val_N'] = df['Valor'].apply(limpar_financeiro)
+        df['Com_N'] = df['Comissao'].apply(limpar_financeiro)
+    except: df = pd.DataFrame()
 
-    # --- 4. DASHBOARD ---
+    # --- 4. TELAS ---
     if menu == "📊 Dashboard":
-        st.title("Painel de Gestão")
-        if not df_vendas.empty:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Faturamento Total", f"R$ {df_vendas['Valor_Num'].sum():,.2f}")
-            m2.metric("Recebido (Pago)", f"R$ {df_vendas[df_vendas['Status']=='Pago']['Valor_Num'].sum():,.2f}")
-            m3.metric("Pendente", f"R$ {df_vendas[df_vendas['Status']=='Pendente']['Valor_Num'].sum():,.2f}")
-            st.dataframe(df_vendas.drop(columns=['Valor_Num', 'Com_Num', 'Timestamp']), use_container_width=True)
+        st.title("Dashboard")
+        if not df.empty:
+            c1, c2 = st.columns(2)
+            c1.metric("Faturamento", f"R$ {df['Val_N'].sum():,.2f}")
+            c2.metric("Recebido", f"R$ {df[df['Status']=='Pago']['Val_N'].sum():,.2f}")
+            st.dataframe(df.drop(columns=['Val_N', 'Com_N']), use_container_width=True)
 
-    # --- 5. CADASTRAR VENDA ---
-    elif menu == "📝 Cadastrar Venda":
-        st.title("Novo Contrato")
-        with st.form("form_venda", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            cliente = col1.text_input("Nome do Cliente")
-            v_total = col1.number_input("Valor Total (R$)", min_value=0.0)
-            v_entrada = col2.number_input("Valor da Entrada (R$)", min_value=0.0)
-            n_parc = col1.number_input("Nº de Parcelas (0 = Vista)", min_value=0, step=1)
-            data_v = col2.date_input("Data da Venda", value=date.today(), format="DD/MM/YYYY")
-            
-            if st.form_submit_button("🚀 Salvar"):
-                if cliente and v_total > 0:
-                    lista = []
-                    if n_parc == 0:
-                        lista.append({"tipo": "À Vista", "valor": v_total, "mes": 0})
-                    else:
-                        if v_entrada > 0:
-                            lista.append({"tipo": "Entrada", "valor": v_entrada, "mes": 0})
-                        v_p = (v_total - v_entrada) / n_parc
-                        for i in range(1, int(n_parc) + 1):
-                            lista.append({"tipo": f"Parcela {i}/{int(n_parc)}", "valor": v_p, "mes": i})
+    elif menu == "📝 Venda":
+        st.title("Nova Venda")
+        with st.form("venda"):
+            cli = st.text_input("Cliente")
+            tot = st.number_input("Total", min_value=0.0)
+            ent = st.number_input("Entrada", min_value=0.0)
+            parc = st.number_input("Parcelas (0=Vista)", min_value=0, step=1)
+            dat = st.date_input("Data", format="DD/MM/YYYY")
+            if st.form_submit_button("Salvar"):
+                itens = [{"t": "À Vista", "v": tot, "m": 0}] if parc == 0 else []
+                if parc > 0:
+                    if ent > 0: itens.append({"t": "Entrada", "v": ent, "m": 0})
+                    vp = (tot - ent) / parc
+                    for i in range(1, int(parc)+1): itens.append({"t": f"Parcela {i}/{int(parc)}", "v": vp, "m": i})
+                for it in itens:
+                    dv = dat + relativedelta(months=it['m'])
+                    payload = {"entry.1532857351": cli, "entry.1279554151": user['nome'], "entry.1633578859": it['t'], "entry.366765493": dv.strftime('%d/%m/%Y'), "entry.1610537227": str(round(it['v'], 2)).replace('.', ','), "entry.1726017566": str(round(it['v']*0.05, 2)).replace('.', ','), "entry.622689505": "Pendente"}
+                    requests.post(FORM_URL, data=payload)
+                st.success("Registrado!")
+                time.sleep(1); st.rerun()
 
-                    for item in lista:
-                        dt = data_v + relativedelta(months=item['mes'])
-                        payload = {
-                            "entry.1532857351": cliente,
-                            "entry.1279554151": user['nome'],
-                            "entry.1633578859": item['tipo'],
-                            "entry.366765493": dt.strftime('%d/%m/%Y'),
-                            "entry.1610537227": str(round(item['valor'], 2)).replace('.', ','),
-                            "entry.1726017566": str(round(item['valor'] * 0.05, 2)).replace('.', ','),
-                            "entry.622689505": "Pendente"
-                        }
-                        requests.post(FORM_URL, data=payload)
-                    st.success("Venda registrada!")
-                    time.sleep(1)
-                    st.rerun()
-
-    # --- 6. BAIXA DE PAGAMENTOS (COM REDIRECIONAMENTO DE SEGURANÇA) ---
-    elif menu == "✅ Baixa de Pagamentos":
-        st.title("Controle Financeiro")
-        if not df_vendas.empty:
-            pendentes = df_vendas[df_vendas['Status'] == 'Pendente']
-            if not pendentes.empty:
-                for index, row in pendentes.iterrows():
-                    with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
-                        linha_real = index + 2
-                        if st.button(f"Confirmar Pagamento", key=f"btn_{index}"):
-                            with st.spinner("Atualizando planilha..."):
-                                try:
-                                    # O 'allow_redirects=True' é fundamental para o Google Script
-                                    r = requests.get(f"{SCRIPT_URL}?row={linha_real}&status=Pago", allow_redirects=True)
-                                    if r.status_code == 200:
-                                        st.success("Pago com sucesso!")
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    else:
-                                        st.error(f"Erro {r.status_code} no Google.")
-                                except Exception as e:
-                                    st.error(f"Falha: {e}")
-            else:
-                st.success("Nenhuma pendência!")
-        else:
-            st.info("Nenhum dado para exibir.")
-
-    # --- 7. VENDEDOR ---
-    elif menu == "💰 Minhas Comissões":
-        st.title(f"Extrato: {user['nome']}")
-        if not df_vendas.empty:
-            meu_df = df_vendas[df_vendas['Vendedor'] == user['nome']].copy()
-            st.dataframe(meu_df.drop(columns=['Valor_Num', 'Com_Num', 'Vendedor', 'Timestamp']), use_container_width=True)
+    elif menu == "✅ Baixas":
+        st.title("Baixa de Pagamentos")
+        pendentes = df[df['Status'] == 'Pendente']
+        if not pendentes.empty:
+            for idx, row in pendentes.iterrows():
+                # O ID é o Timestamp da coluna 0
+                id_venda = str(row['ID'])
+                with st.expander(f"📌 {row['Cliente']} - {row['Tipo']} (R$ {row['Valor']})"):
+                    if st.button(f"Confirmar Recebimento", key=f"btn_{idx}"):
+                        # Envia o ID para o Script buscar a linha exata
+                        res = requests.get(f"{SCRIPT_URL}?id={id_venda}&status=Pago")
+                        if res.status_code == 200:
+                            st.success("Atualizado!")
+                            time.sleep(1); st.rerun()
+                        else: st.error("Erro no Google.")
+        else: st.success("Sem pendências.")
