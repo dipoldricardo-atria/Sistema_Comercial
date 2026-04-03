@@ -10,7 +10,6 @@ from dateutil.relativedelta import relativedelta
 # --- 1. CONFIGURAÇÕES MESTRAS ---
 st.set_page_config(page_title="ERP COMERCIAL PRO", layout="wide", page_icon="🚀")
 
-# IDs que você confirmou (Não altere!)
 ID_VALOR_TOTAL = "1849135056"
 ID_DATA_BASE = "925681697"
 
@@ -54,13 +53,14 @@ if not st.session_state['logged_in']:
                 })
                 st.rerun()
             else: st.error("Acesso negado.")
+        else: st.error("Erro ao carregar usuários.")
 else:
     user = st.session_state['user_info']
     perfil_admin = user['perfil'] == "Admin"
     st.sidebar.markdown(f"👤 **{user['nome']}**")
     menu = st.sidebar.radio("Navegação", ["📊 Dashboard Executivo", "📝 Gestão de Vendas", "✅ Baixar Pagamentos"])
     
-    # --- 3. PROCESSAMENTO 10 COLUNAS (BLINDADO) ---
+    # --- 3. PROCESSAMENTO 10 COLUNAS ---
     df_raw = carregar_dados(GID_VENDAS)
     if not df_raw.empty and len(df_raw.columns) >= 10:
         df = df_raw.iloc[:, :10].copy()
@@ -70,23 +70,32 @@ else:
         df['DB_Date'] = pd.to_datetime(df['Data_Base'], dayfirst=True, errors='coerce')
         df['DV_Date'] = pd.to_datetime(df['Vencimento'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['DB_Date', 'DV_Date'])
-        df['Mes_Base'] = df['DB_Date'].dt.to_period('M')
-        df['Mes_Venc'] = df['DV_Date'].dt.to_period('M')
+        if not df.empty:
+            df['Mes_Base'] = df['DB_Date'].dt.to_period('M')
+            df['Mes_Venc'] = df['DV_Date'].dt.to_period('M')
     else:
         df = pd.DataFrame()
 
-    # --- 4. DASHBOARD EXECUTIVO ---
+    # --- 4. DASHBOARD EXECUTIVO (COM TRAVA DE SEGURANÇA) ---
     if menu == "📊 Dashboard Executivo":
         st.title("📊 Inteligência Comercial")
+        
         if df.empty:
-            st.info("Aguardando o primeiro lançamento para gerar gráficos.")
+            st.info("💡 A base de dados está vazia. Registre a primeira venda em 'Gestão de Vendas' para ativar os indicadores.")
         else:
             df_dash = df.copy() if perfil_admin else df[df['Vendedor'] == user['nome']]
             
-            c1, c2 = st.columns(2)
+            # --- PROTEÇÃO CONTRA O ERRO RangeError ---
             m_list = sorted(df['Mes_Base'].unique())
-            m_sel = c2.select_slider("Período de Análise (Data Base)", options=m_list, value=(m_list[0], m_list[-1]))
-            df_filtrado = df_dash[(df_dash['Mes_Base'] >= m_sel[0]) & (df_dash['Mes_Base'] <= m_sel[1])]
+            
+            if len(m_list) > 1:
+                c1, c2 = st.columns([1, 3])
+                m_sel = c2.select_slider("Período de Análise (Data Base)", options=m_list, value=(m_list[0], m_list[-1]))
+                df_filtrado = df_dash[(df_dash['Mes_Base'] >= m_sel[0]) & (df_dash['Mes_Base'] <= m_sel[1])]
+            else:
+                # Se houver apenas um mês, não precisa do slider (evita o erro)
+                df_filtrado = df_dash
+                st.info(f"Exibindo dados de: {m_list[0]}")
 
             df_fat_real = df_filtrado.drop_duplicates('TS')
             
@@ -100,7 +109,7 @@ else:
             st.subheader("📋 Tabela de Contratos no Período")
             st.dataframe(df_fat_real[['Data_Base', 'Cliente', 'Vendedor', 'Valor_Total', 'Tipo']], use_container_width=True)
 
-    # --- 5. GESTÃO DE VENDAS (SISTEMA DE ENVIO REFORÇADO) ---
+    # --- 5. GESTÃO DE VENDAS ---
     elif menu == "📝 Gestão de Vendas":
         st.title("📝 Central de Contratos")
         with st.form("venda_blindada", clear_on_submit=True):
@@ -120,58 +129,47 @@ else:
                     success = 0
                     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
                     
-                    # 1. Registro da Entrada
                     if f_entrada > 0:
-                        payload_e = {
+                        p_e = {
                             "entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": "Entrada",
-                            "entry.366765493": f_data.strftime('%d/%m/%Y'), 
-                            "entry.1610537227": str(round(f_entrada,2)).replace('.',','),
-                            "entry.622689505": "Pendente",
-                            f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
+                            "entry.366765493": f_data.strftime('%d/%m/%Y'), "entry.1610537227": str(round(f_entrada,2)).replace('.',','),
+                            "entry.622689505": "Pendente", f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
                             f"entry.{ID_DATA_BASE}": f_data.strftime('%d/%m/%Y')
                         }
-                        r_e = requests.post(FORM_URL, data=payload_e, headers=headers)
+                        r_e = requests.post(FORM_URL, data=p_e, headers=headers)
                         if r_e.status_code == 200: success += 1
                     
-                    # 2. Registro das Parcelas/Recorrência
                     saldo = f_total - f_entrada
                     loops = 1 if f_parc == 0 else int(f_parc)
                     v_p = saldo / loops if f_parc > 0 else f_total
                     
                     for i in range(loops):
                         venc_dt = f_data + relativedelta(months=i+1 if f_entrada > 0 else i)
-                        tipo_txt = f"Parc {i+1}/{int(f_parc)}" if f_parc > 0 else "Mensalidade (Recorrente)"
-                        payload_p = {
-                            "entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": tipo_txt,
-                            "entry.366765493": venc_dt.strftime('%d/%m/%Y'), 
-                            "entry.1610537227": str(round(v_p,2)).replace('.',','),
-                            "entry.622689505": "Pendente",
-                            f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
+                        tipo_p = f"Parc {i+1}/{int(f_parc)}" if f_parc > 0 else "Mensalidade (Recorrente)"
+                        p_p = {
+                            "entry.1532857351": f_cli, "entry.1279554151": f_vend, "entry.1633578859": tipo_p,
+                            "entry.366765493": venc_dt.strftime('%d/%m/%Y'), "entry.1610537227": str(round(v_p,2)).replace('.',','),
+                            "entry.622689505": "Pendente", f"entry.{ID_VALOR_TOTAL}": str(round(f_total,2)).replace('.',','),
                             f"entry.{ID_DATA_BASE}": f_data.strftime('%d/%m/%Y')
                         }
-                        r_p = requests.post(FORM_URL, data=payload_p, headers=headers)
+                        r_p = requests.post(FORM_URL, data=p_p, headers=headers)
                         if r_p.status_code == 200: success += 1
                     
                     if success > 0:
-                        st.success(f"✅ Sucesso! {success} registros inseridos na planilha.")
+                        st.success("✅ Gravado com sucesso!")
                         time.sleep(2)
                         st.rerun()
-                    else:
-                        st.error("Falha no envio para o Google. Verifique sua conexão.")
 
     # --- 6. BAIXAS ---
     elif menu == "✅ Baixar Pagamentos":
         st.title("✅ Conciliação Financeira")
-        if not perfil_admin: st.error("Acesso restrito ao Admin."); st.stop()
+        if not perfil_admin: st.error("Acesso restrito."); st.stop()
         
         pendentes = df[df['Status'] == 'Pendente'] if not df.empty else pd.DataFrame()
-        if pendentes.empty:
-            st.info("Nenhum pagamento pendente.")
-        else:
-            for i, r in pendentes.iterrows():
-                with st.expander(f"{r['Cliente']} | {r['Tipo']} | R$ {r['Valor_Parc']}"):
-                    if st.button("Confirmar Baixa", key=f"bx_{i}"):
-                        requests.get(f"{SCRIPT_URL}?row={i+2}&status=Pago")
-                        st.success("Pagamento baixado!"); time.sleep(1); st.rerun()
+        for i, r in pendentes.iterrows():
+            with st.expander(f"{r['Cliente']} | {r['Tipo']} | R$ {r['Valor_Parc']}"):
+                if st.button("Confirmar Baixa", key=f"bx_{i}"):
+                    requests.get(f"{SCRIPT_URL}?row={i+2}&status=Pago")
+                    st.success("Baixado!"); time.sleep(1); st.rerun()
 
     if st.sidebar.button("Sair"): st.session_state.clear(); st.rerun()
