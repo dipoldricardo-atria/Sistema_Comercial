@@ -8,7 +8,6 @@ from dateutil.relativedelta import relativedelta
 st.set_page_config(page_title="ERP 8.6 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS ---
-# Lembre-se de verificar se esta URL é a da sua "Nova Implantação" do Google Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmH0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
@@ -21,7 +20,6 @@ IDs = {
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- FUNÇÕES DE LIMPEZA E LEITURA ---
 def limpar_valor(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
@@ -31,7 +29,6 @@ def limpar_valor(valor):
 
 def carregar_dados_realtime():
     try:
-        # Adicionamos um timestamp (t) para garantir que o Google não nos entregue dados antigos do cache
         r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
         return df
@@ -107,17 +104,14 @@ if menu == "📝 Lançar & Gestão":
         st.subheader("💸 Baixa de Recebimento")
         df_f = carregar_dados_realtime()
         if not df_f.empty:
-            # Filtra apenas o que não está pago (Case-insensitive para segurança)
             pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
-                        st.write(f"Vencimento: {row['Vencimento']}")
                         if st.button(f"Confirmar Pagamento", key=f"baixa_{row['TS']}"):
-                            # Comando que ativa o Script do Google
                             requests.get(SCRIPT_URL, params={"ts": str(row['TS']), "action": "marcarPago"})
-                            st.success("Status atualizado na planilha!"); time.sleep(0.5); st.rerun()
-            else: st.info("Tudo em dia! Nenhuma parcela pendente.")
+                            st.success("Status atualizado!"); time.sleep(0.5); st.rerun()
+            else: st.info("Nenhuma parcela pendente.")
 
     with tabs[2]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
@@ -128,10 +122,31 @@ if menu == "📝 Lançar & Gestão":
             sel = st.selectbox("Selecione para Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
             if sel != "Selecione...":
                 dados = opcoes[sel]
-                col_ed, col_del = st.columns([2, 1])
-                with col_ed:
-                    with st.form("edicao_venda"):
-                        e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                        e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
-                        e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
-                        e_tot = st.
+                with st.form("edicao_venda"):
+                    e_cli = st.text_input("Cliente", value=dados['Cliente'])
+                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
+                    e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
+                    e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
+                    if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
+                        requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
+                        executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
+                        st.rerun()
+                if st.button("🔥 APAGAR TUDO", type="primary"):
+                    requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
+                    st.rerun()
+
+elif menu == "📊 Relatório & Previsões":
+    df = carregar_dados_realtime()
+    if not df.empty:
+        if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
+        df['C_Num'] = df['Comissão'].apply(limpar_valor)
+        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
+        realizado = df[df['Status'].astype(str).str.upper().isin(status_pagos)]
+        previsao = df[~df['Status'].astype(str).str.upper().isin(status_pagos)]
+        st.subheader("💰 Painel de Comissões")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Realizado (Pagas)", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Previsão (Pendentes)", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
+        st.divider()
+        st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
