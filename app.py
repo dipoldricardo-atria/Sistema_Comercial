@@ -6,11 +6,13 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 # --- CONFIGURAÇÕES MESTRAS ---
-st.set_page_config(page_title="ERP COMERCIAL PRO 4.2", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="ERP COMERCIAL PRO 4.3", layout="wide", page_icon="🚀")
 
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
-CSV_URL = "https://docs.google.com/spreadsheets/d/e/PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?output=csv"
+CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?output=csv"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
+# URL do Apps Script para Deletar/Baixar
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyur81SkxrO0U4q-Qx_BnMqrm0N3ihp-wt7YNEYkOksjjfCNQwx8TDWbbHmPQHNsO5GDg/exec"
 
 IDs = {
     "cliente": "354575898", "vendedor": "1508368855", "tipo": "2051931448",
@@ -26,7 +28,7 @@ def carregar_dados(url):
 if 'logado' not in st.session_state: st.session_state.logado = False
 
 if not st.session_state.logado:
-    st.title("🔐 Acesso Restrito")
+    st.title("🔐 Login - Gestão Comercial")
     df_u = carregar_dados(URL_USUARIOS)
     with st.form("login"):
         user_email = st.text_input("E-mail")
@@ -40,23 +42,27 @@ if not st.session_state.logado:
                     st.rerun()
     st.stop()
 
-# --- SISTEMA ---
+# --- INTERFACE PRINCIPAL ---
 u = st.session_state.info
 df_vendedores = carregar_dados(URL_USUARIOS)
-menu = st.sidebar.radio("Navegação", ["📝 Lançar Venda", "📊 Relatório Comercial"])
+st.sidebar.title(f"👤 {u['nome']}")
+st.sidebar.write(f"Nível: **{u['cargo']}**")
+
+menu = st.sidebar.radio("Navegação", ["📝 Lançar Venda", "📊 Relatório & Gestão"])
 
 if menu == "📝 Lançar Venda":
     st.subheader("📝 Registro de Novo Contrato")
     with st.form("venda_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         f_cli = c1.text_input("Nome do Cliente")
-        f_data = c2.date_input("Data do Contrato", value=datetime.now())
+        # Exibição brasileira no seletor
+        f_data = c2.date_input("Data do Contrato", value=datetime.now(), format="DD/MM/YYYY")
         
         vendedor_final = st.selectbox("Vendedor", df_vendedores['nome'].tolist()) if u['cargo'] == "Admin" else u['nome']
         
-        f_total = c1.number_input("Valor Total (R$)", min_value=0.0, format="%.2f")
-        f_entrada = c2.number_input("Entrada (R$)", min_value=0.0, format="%.2f")
-        f_parc = st.number_input("Número de Parcelas (após entrada)", min_value=0, step=1)
+        f_total = c1.number_input("Valor Total do Contrato (R$)", min_value=0.0, format="%.2f")
+        f_entrada = c2.number_input("Valor de Entrada (R$)", min_value=0.0, format="%.2f")
+        f_parc = st.number_input("Número de Parcelas", min_value=0, step=1)
         
         if st.form_submit_button("🚀 PROCESSAR E GRAVAR"):
             def enviar(tipo, valor, venc):
@@ -64,7 +70,7 @@ if menu == "📝 Lançar Venda":
                     f"entry.{IDs['cliente']}": str(f_cli),
                     f"entry.{IDs['vendedor']}": str(vendedor_final),
                     f"entry.{IDs['tipo']}": str(tipo),
-                    f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'),
+                    f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'), # Formato interno Google
                     f"entry.{IDs['valor_parc']}": str(round(valor, 2)).replace('.', ','),
                     f"entry.{IDs['comissao']}": str(round(valor * 0.05, 2)).replace('.', ','),
                     f"entry.{IDs['status']}": "Pendente",
@@ -74,34 +80,59 @@ if menu == "📝 Lançar Venda":
                 return requests.post(FORM_URL, data=payload).status_code
 
             resul = []
-            # Caso 1: Venda À Vista
             if f_parc == 0:
                 resul.append(enviar("À Vista", f_total, f_data))
-            # Caso 2: Venda Parcelada
             else:
                 if f_entrada > 0:
                     resul.append(enviar("Entrada", f_entrada, f_data))
                 
-                valor_cada = (f_total - f_entrada) / f_parc
+                v_p = (f_total - f_entrada) / f_parc if f_parc > 0 else 0
                 for i in range(int(f_parc)):
-                    # A primeira parcela vence 30 dias após a data base
-                    data_venc = f_data + relativedelta(months=i+1)
-                    resul.append(enviar(f"Parc {i+1}/{int(f_parc)}", valor_cada, data_venc))
+                    dv = f_data + relativedelta(months=i+1)
+                    resul.append(enviar(f"Parc {i+1}/{int(f_parc)}", v_p, dv))
             
             if all(s == 200 for s in resul):
-                st.success("✅ Venda e parcelas registradas com sucesso!")
+                st.success("✅ Venda registrada com sucesso!")
                 time.sleep(1); st.rerun()
-            else:
-                st.error(f"❌ Falha parcial na sincronização. Status: {resul}")
+            else: st.error("❌ Falha na conexão.")
 
-elif menu == "📊 Relatório Comercial":
-    st.subheader("📊 Histórico de Lançamentos")
+elif menu == "📊 Relatório & Gestão":
+    st.subheader("📊 Histórico de Vendas")
     df = carregar_dados(CSV_URL)
     if not df.empty:
-        # Renomeação dinâmica para garantir visualização limpa
-        try:
-            df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
-            if u['cargo'] != "Admin": df = df[df['Vendedor'] == u['nome']]
-            st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
-        except:
-            st.dataframe(df)
+        df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
+        
+        # Filtro de Vendedor (Segurança)
+        if u['cargo'] != "Admin":
+            df = df[df['Vendedor'] == u['nome']]
+        
+        # Formatação de Datas para Exibição BR (dd/mm/aaaa)
+        df['Vencimento'] = pd.to_datetime(df['Vencimento']).dt.strftime('%d/%m/%Y')
+        df['Data_Base'] = pd.to_datetime(df['Data_Base']).dt.strftime('%d/%m/%Y')
+
+        st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
+
+        # Módulo de Exclusão e Baixa (Admin Apenas)
+        if u['cargo'] == "Admin":
+            st.divider()
+            st.subheader("⚙️ Ações Administrativas")
+            col_sel, col_btn = st.columns([3, 1])
+            
+            # Criamos uma lista de opções para o Admin selecionar o que apagar/baixar
+            lista_opcoes = [f"{i+2} | {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}" for i, row in df.iterrows()]
+            selecionado = col_sel.selectbox("Selecione um registro (Linha | Cliente | Parcela)", lista_opcoes)
+            
+            linha_id = selecionado.split(" | ")[0]
+            
+            c1, c2 = col_btn.columns(2)
+            if c1.button("🗑️ EXCLUIR", use_container_width=True):
+                # Envia comando de exclusão para o Apps Script
+                res = requests.get(f"{SCRIPT_URL}?row={linha_id}&action=delete")
+                st.warning(f"Registro da linha {linha_id} removido.")
+                time.sleep(1); st.rerun()
+
+            if c2.button("✅ PAGO", use_container_width=True):
+                # Envia comando de baixa
+                res = requests.get(f"{SCRIPT_URL}?row={linha_id}&status=Pago")
+                st.success("Status atualizado para Pago.")
+                time.sleep(1); st.rerun()
