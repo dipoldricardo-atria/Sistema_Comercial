@@ -3,10 +3,10 @@ import pandas as pd
 import requests
 import time
 import re
-from datetime import datetime
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 10.3 ADMIN FLOW", layout="wide", page_icon="📈")
+st.set_page_config(page_title="ERP 11.2 BI FLOW", layout="wide", page_icon="📈")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -14,7 +14,7 @@ URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- MOTOR DE LIMPEZA ---
+# --- MOTOR DE LIMPEZA (PARA RELATÓRIOS) ---
 def para_numero_puro(valor):
     if pd.isna(valor) or str(valor).strip() == "": return 0.0
     texto = re.sub(r'[^\d.,-]', '', str(valor))
@@ -30,6 +30,8 @@ def carregar_dados_realtime():
     try:
         r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
+        # Preparação para filtros de data
+        df['Data_Base_DT'] = pd.to_datetime(df['Data_Base'], errors='coerce').dt.date
         return df
     except: return pd.DataFrame()
 
@@ -60,12 +62,45 @@ try:
 except:
     lista_vendedores = [nome_user]
 
+# --- FILTROS NA SIDEBAR ---
+st.sidebar.header("🔍 Filtros de Relatório")
+df_raw = carregar_dados_realtime()
+
+if not df_raw.empty:
+    # 1. Vendedores
+    vendedores_lista = sorted(df_raw['Vendedor'].unique().tolist())
+    vendedores_sel = st.sidebar.multiselect("Vendedores", vendedores_lista, default=vendedores_lista) if cargo == "Admin" else [nome_user]
+    
+    # 2. Período
+    hoje = date.today()
+    data_inicio = st.sidebar.date_input("Início (Data Contrato)", hoje - relativedelta(months=1))
+    data_fim = st.sidebar.date_input("Fim (Data Contrato)", hoje)
+
+    # 3. Status e Busca
+    status_filtro = st.sidebar.selectbox("Status", ["Todos", "Pago", "Pendente"])
+    busca_cliente = st.sidebar.text_input("🎯 Buscar Cliente")
+
+    # --- APLICAÇÃO DOS FILTROS ---
+    df = df_raw.copy()
+    df = df[df['Vendedor'].isin(vendedores_sel)]
+    df = df[(df['Data_Base_DT'] >= data_inicio) & (df['Data_Base_DT'] <= data_fim)]
+    
+    if status_filtro != "Todos":
+        pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
+        st_l = df['Status'].astype(str).str.upper().str.strip()
+        df = df[st_l.isin(pgs)] if status_filtro == "Pago" else df[~st_l.isin(pgs)]
+    
+    if busca_cliente:
+        df = df[df['Cliente'].str.contains(busca_cliente, case=False, na=False)]
+
+# --- NAVEGAÇÃO ---
 if st.sidebar.button("🚪 Sair"):
     st.session_state.logado = False
     st.rerun()
 
-menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatório & Previsões"])
+menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatórios Dinâmicos"])
 
+# --- LÓGICA DE GRAVAÇÃO (INTACTA - V10.3) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -104,9 +139,8 @@ if menu == "📝 Lançar & Gestão":
 
     with tabs[1]:
         st.subheader("💸 Recebimento")
-        df_f = carregar_dados_realtime()
-        if not df_f.empty:
-            pendentes = df_f[~df_f['Status'].astype(str).str.upper().str.strip().isin(['PAGO', 'RECEBIDO'])]
+        if not df_raw.empty:
+            pendentes = df_raw[~df_raw['Status'].astype(str).str.upper().str.strip().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
@@ -117,16 +151,15 @@ if menu == "📝 Lançar & Gestão":
 
     with tabs[2]:
         if cargo != "Admin": st.warning("Restrito."); st.stop()
-        df_edit = carregar_dados_realtime()
-        if not df_edit.empty:
-            contratos = df_edit[df_edit['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
+        if not df_raw.empty:
+            contratos = df_raw[df_raw['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos.iterrows()}
             sel = st.selectbox("Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
             if sel != "Selecione...":
                 dados = opcoes[sel]
                 with st.form("edicao"):
                     e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']))
+                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']).date())
                     e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
                     e_tot = st.number_input("Total", value=para_numero_puro(dados['Total']))
                     if st.form_submit_button("✅ SALVAR"):
@@ -137,44 +170,36 @@ if menu == "📝 Lançar & Gestão":
                     requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                     st.rerun()
 
-elif menu == "📊 Relatório & Previsões":
-    df = carregar_dados_realtime()
+elif menu == "📊 Relatórios Dinâmicos":
     if not df.empty:
-        if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
-        
-        # --- PREPARAÇÃO DE NÚMEROS ---
         df['C_Num'] = df['Comissão'].apply(para_numero_puro)
         df['V_Num'] = df['Valor'].apply(para_numero_puro)
         df['T_Num'] = df['Total'].apply(para_numero_puro)
         
-        status_limpo = df['Status'].astype(str).str.upper().str.strip()
-        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
+        st_l = df['Status'].astype(str).str.upper().str.strip()
+        pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
         
-        # --- CÁLCULO DE COMISSÕES ---
-        comis_paga = df[status_limpo.isin(status_pagos)]['C_Num'].sum()
-        comis_pend = df[~status_limpo.isin(status_pagos)]['C_Num'].sum()
+        c_paga = df[st_l.isin(pgs)]['C_Num'].sum()
+        c_pend = df[~st_l.isin(pgs)]['C_Num'].sum()
+        df_u = df.drop_duplicates(subset=['ID_Contrato'])
+        f_cont = df_u['T_Num'].sum()
+        f_rec = df[st_l.isin(pgs)]['V_Num'].sum()
 
-        # --- FATURAMENTO DE PROJETOS ---
-        df_contratos_unicos = df.drop_duplicates(subset=['ID_Contrato'])
-        total_contratado = df_contratos_unicos['T_Num'].sum()
-        total_recebido = df[status_limpo.isin(status_pagos)]['V_Num'].sum()
-        total_a_receber = df[~status_limpo.isin(status_pagos)]['V_Num'].sum()
+        st.title("📊 Painel de Performance Comercial")
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Exportar CSV (Dados Filtrados)", data=csv, file_name=f"relatorio_{data_inicio}.csv", mime="text/csv")
 
-        # --- INTERFACE ---
         st.subheader("💰 Suas Comissões")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Comissões Pagas", f"R$ {comis_paga:,.2f}")
-        m2.metric("A Receber (Previsão)", f"R$ {comis_pend:,.2f}")
-        m3.metric("Total Acumulado", f"R$ {comis_paga + comis_pend:,.2f}")
+        m1.metric("Pagas", f"R$ {c_paga:,.2f}")
+        m2.metric("A Receber", f"R$ {c_pend:,.2f}")
+        m3.metric("Total Acumulado", f"R$ {c_paga+c_pend:,.2f}")
 
-        st.divider()
-        
-        st.subheader("🏢 Gestão de Projetos (Vendas Brutas)")
+        st.subheader("🏢 Vendas de Projetos")
         f1, f2, f3 = st.columns(3)
-        f1.metric("Total Contratado", f"R$ {total_contratado:,.2f}")
-        f2.metric("Total já Recebido", f"R$ {total_recebido:,.2f}")
-        f3.metric("Saldo em Aberto", f"R$ {total_a_receber:,.2f}")
+        f1.metric("Total Contratado", f"R$ {f_cont:,.2f}")
+        f2.metric("Total já Recebido", f"R$ {f_rec:,.2f}")
+        f3.metric("Saldo em Aberto", f"R$ {f_cont - f_rec:,.2f}")
 
         st.divider()
-        st.write("### 📋 Listagem Detalhada")
-        st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
+        st.dataframe(df.sort_values('Data_Base', ascending=False), use_container_width=True)
