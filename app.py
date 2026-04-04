@@ -14,7 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-st.set_page_config(page_title="ERP 14.6 FINAL", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 14.7 FINAL", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -42,86 +42,54 @@ def carregar_dados_realtime():
         return df
     except: return pd.DataFrame()
 
-# --- MOTOR DE PDF (FLUXO CONTÍNUO) ---
+# --- MOTOR DE PDF ---
 def gerar_pdf_espelho(df_filtrado, metrics, period):
     buffer = io.BytesIO()
-    # Margens levemente reduzidas para caber mais informação
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
     elements = []
     styles = getSampleStyleSheet()
-    
     cor_primaria = colors.HexColor("#1f4e79")
     cor_fundo = colors.HexColor("#f2f2f2")
-
     style_title = ParagraphStyle(name='TitleBR', parent=styles['Title'], fontSize=16, spaceAfter=15)
     style_h2 = ParagraphStyle(name='H2', parent=styles['Heading2'], fontSize=12, spaceBefore=10, spaceAfter=8, textColor=cor_primaria)
 
-    # Cabeçalho
     elements.append(Paragraph(f"<b>RELATÓRIO DE DESEMPENHO COMERCIAL</b>", style_title))
     elements.append(Paragraph(f"<b>Período:</b> {period['inicio']} a {period['fim']} | <b>Emissão:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
     elements.append(Spacer(1, 15))
 
-    # Seção 1 - Resumo
     elements.append(Paragraph("1. RESUMO FINANCEIRO", style_h2))
     m_data = [["TOTAL CONTRATADO", "ATINGIMENTO META", "JÁ EM CAIXA", "SALDO A RECEBER"],
               [metrics.get('total', '0'), metrics.get('atingimento', '0'), metrics.get('caixa', '0'), metrics.get('saldo', '0')]]
     tm = Table(m_data, colWidths=[135, 135, 135, 135])
-    tm.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), cor_fundo),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 9)
-    ]))
+    tm.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), cor_fundo), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 9)]))
     elements.append(tm)
     elements.append(Spacer(1, 10))
 
-    # Seção 2 - Status
     elements.append(Paragraph("2. SAÚDE DOS RECEBIMENTOS (POR STATUS)", style_h2))
     df_filtrado['V_Num'] = df_filtrado['Valor'].apply(para_numero_puro)
     status_df = df_filtrado.groupby('Status')['V_Num'].sum().reset_index()
     s_data = [["Status do Lançamento", "Valor Acumulado"]]
-    for _, r in status_df.iterrows():
-        s_data.append([str(r['Status']), f"R$ {r['V_Num']:,.2f}"])
+    for _, r in status_df.iterrows(): s_data.append([str(r['Status']), f"R$ {r['V_Num']:,.2f}"])
     ts = Table(s_data, colWidths=[270, 270])
-    ts.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), cor_primaria),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('ALIGN', (0,0), (0,-1), 'LEFT'),
-        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-    ]))
+    ts.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), cor_primaria), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('ALIGN', (1,0), (1,-1), 'RIGHT')]))
     elements.append(ts)
     elements.append(Spacer(1, 10))
 
-    # Seção 3 - Detalhamento (REMOVIDO O PageBreak PARA VIR LOGO ABAIXO)
     elements.append(Paragraph("3. DETALHAMENTO DE CONTRATOS E PARCIAIS", style_h2))
     d_data = [["Cliente", "Tipo/Parc", "Vencimento", "Valor", "Status"]]
     df_sorted = df_filtrado.sort_values(['Data_Base', 'Cliente'], ascending=[False, True])
     for _, row in df_sorted.iterrows():
-        d_data.append([
-            str(row['Cliente'])[:25], 
-            str(row['Tipo']), 
-            pd.to_datetime(row['Vencimento']).strftime('%d/%m/%Y'), 
-            f"R$ {para_numero_puro(row['Valor']):,.2f}", 
-            str(row['Status'])
-        ])
-    
+        d_data.append([str(row['Cliente'])[:25], str(row['Tipo']), pd.to_datetime(row['Vencimento']).strftime('%d/%m/%Y'), f"R$ {para_numero_puro(row['Valor']):,.2f}", str(row['Status'])])
     td = Table(d_data, repeatRows=1, colWidths=[160, 100, 80, 100, 100])
-    td.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.grey),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('GRID', (0,0), (-1,-1), 0.2, colors.black),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [cor_fundo, colors.white]),
-        ('ALIGN', (3,1), (3,-1), 'RIGHT'), # Alinha valores à direita
-    ]))
+    td.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.grey), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.2, colors.black), ('ROWBACKGROUNDS', (0, 1), (-1, -1), [cor_fundo, colors.white]), ('ALIGN', (3,1), (3,-1), 'RIGHT')]))
     elements.append(td)
-    
     doc.build(elements)
     buffer.seek(0)
     return buffer
+
+# --- FUNÇÃO DE EXPORTAÇÃO CSV ---
+def converter_para_csv(df):
+    return df.to_csv(index=False, sep=';', encoding='utf-8-sig')
 
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
@@ -172,7 +140,6 @@ if not df_raw.empty:
     df = df_raw.copy()
     df = df[df['Vendedor'].isin(vendedores_sel)]
     df = df[(df['Data_Base_DT'] >= data_inicio) & (df['Data_Base_DT'] <= data_fim)]
-    
     if status_filtro != "Todos":
         pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
         df = df[st_l.isin(pgs)] if status_filtro == "Pago" else df[~st_l.isin(pgs)]
@@ -187,7 +154,6 @@ if menu == "📊 Dashboard Analytics":
         df['V_Num'] = df['Valor'].apply(para_numero_puro)
         df['T_Num'] = df['Total'].apply(para_numero_puro)
         df_unicos = df.drop_duplicates(subset=['ID_Contrato'])
-        
         t_contratado = df_unicos['T_Num'].sum()
         atingimento = (t_contratado / meta_mensal * 100) if meta_mensal > 0 else 0
         pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
@@ -195,16 +161,16 @@ if menu == "📊 Dashboard Analytics":
         
         st.title("🚀 Business Intelligence Executivo")
         
-        res_metrics = {
-            "total": f"R$ {t_contratado:,.2f}", 
-            "atingimento": f"{atingimento:.1f}%", 
-            "caixa": f"R$ {v_recebido:,.2f}", 
-            "saldo": f"R$ {t_contratado - v_recebido:,.2f}"
-        }
+        res_metrics = {"total": f"R$ {t_contratado:,.2f}", "atingimento": f"{atingimento:.1f}%", "caixa": f"R$ {v_recebido:,.2f}", "saldo": f"R$ {t_contratado - v_recebido:,.2f}"}
         periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
         
-        # Download PDF
-        st.download_button("📄 BAIXAR RELATÓRIO PDF", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+        # BOTÕES DE EXPORTAÇÃO
+        c_pdf, c_csv = st.columns(2)
+        with c_pdf:
+            st.download_button("📄 BAIXAR RELATÓRIO PDF", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+        with c_csv:
+            csv_data = converter_para_csv(df)
+            st.download_button("📂 EXPORTAR PARA EXCEL (CSV)", data=csv_data, file_name=f"Dados_ERP_{date.today()}.csv", mime="text/csv", use_container_width=True)
 
         st.divider()
         c1, c2, c3, c4 = st.columns(4)
