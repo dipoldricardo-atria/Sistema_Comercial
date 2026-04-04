@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.9 SISTEMA", layout="wide", page_icon="💰")
+st.set_page_config(page_title="ERP 9.0 SISTEMA", layout="wide", page_icon="💰")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "SUA_URL_DO_SCRIPT_AQUI" 
@@ -30,7 +30,7 @@ def limpar_valor(valor):
 
 def carregar_dados_realtime():
     try:
-        r = requests.get(f"{SCRIPT_URL}?action=read", timeout=25)
+        r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
         return df
     except: return pd.DataFrame()
@@ -62,7 +62,6 @@ try:
 except: lista_vendedores = [nome_user]
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatórios"])
-
 if st.sidebar.button("🚪 Sair"):
     st.session_state.logado = False
     st.rerun()
@@ -109,11 +108,13 @@ if menu == "📝 Lançar & Gestão":
         st.markdown("### 💸 Baixa de Pagamentos")
         df_baixa = carregar_dados_realtime()
         if not df_baixa.empty:
-            pendentes = df_baixa[df_baixa['Status'].str.upper() == "PENDENTE"]
+            # Pega TUDO que não contém "PAGO" ou "RECEBIDO" no status
+            pendentes = df_baixa[~df_baixa['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
+            
             if not pendentes.empty:
                 contratos = pendentes.groupby(['ID_Contrato', 'Cliente']).size().reset_index()
                 opcoes_c = {f"{r['Cliente']} ({r['ID_Contrato']})": r['ID_Contrato'] for i, r in contratos.iterrows()}
-                sel_c = st.selectbox("Selecione o Contrato:", ["Selecione..."] + list(opcoes_c.keys()))
+                sel_c = st.selectbox("Selecione o Contrato para Baixa:", ["Selecione..."] + list(opcoes_c.keys()))
                 
                 if sel_c != "Selecione...":
                     id_sel = opcoes_c[sel_c]
@@ -124,12 +125,17 @@ if menu == "📝 Lançar & Gestão":
                         col1.write(f"**{row['Tipo']}** - {row['Vencimento']}")
                         col2.write(f"R$ {row['Valor']}")
                         
-                        if col3.button(f"Dar Baixa", key=f"btn_{row['TS']}"):
-                            # ENVIO DIRETO SEM FORMATAÇÃO EXTRA
-                            requests.get(SCRIPT_URL, params={"ts": row['TS'], "action": "marcarPago"})
-                            st.success("Ok!"); time.sleep(0.5); st.rerun()
+                        st_atual = str(row['Status']).upper()
+                        if st_atual not in ['PAGO', 'RECEBIDO']:
+                            if col3.button(f"Dar Baixa", key=f"btn_{row['TS']}_{i}"):
+                                requests.get(SCRIPT_URL, params={"ts": str(row['TS']), "action": "marcarPago"})
+                                st.success("Efetuado!")
+                                time.sleep(0.5)
+                                st.rerun()
+                        else:
+                            col3.write("✅ Pago")
             else:
-                st.info("Nenhuma parcela pendente.")
+                st.info("Nenhuma parcela pendente encontrada.")
 
     with tabs[2]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
@@ -137,7 +143,7 @@ if menu == "📝 Lançar & Gestão":
         if not df_edit.empty:
             contratos_ed = df_edit.groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes_ed = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos_ed.iterrows()}
-            sel_ed = st.selectbox("Selecione para Editar:", ["Selecione..."] + list(opcoes_ed.keys()))
+            sel_ed = st.selectbox("Editar Contrato:", ["Selecione..."] + list(opcoes_ed.keys()))
             if sel_ed != "Selecione...":
                 d = opcoes_ed[sel_ed]
                 with st.form("edicao"):
@@ -147,7 +153,7 @@ if menu == "📝 Lançar & Gestão":
                         requests.get(SCRIPT_URL, params={"id_contrato": d['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, d['Vendedor'], pd.to_datetime(d['Data_Base']), e_tot, 0, 0, d['ID_Contrato'])
                         st.rerun()
-                if st.button("🔥 EXCLUIR CONTRATO"):
+                if st.button("🔥 EXCLUIR TUDO"):
                     requests.get(SCRIPT_URL, params={"id_contrato": d['ID_Contrato'], "action": "deleteContrato"})
                     st.rerun()
 
@@ -155,14 +161,14 @@ elif menu == "📊 Relatórios":
     df = carregar_dados_realtime()
     if not df.empty:
         df['C_Num'] = df['Comissão'].apply(limpar_valor)
-        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
-        realizado = df[df['Status'].str.upper().isin(status_pagos)]
-        previsao = df[~df['Status'].str.upper().isin(status_pagos)]
+        st_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
+        realizado = df[df['Status'].astype(str).str.upper().isin(st_pagos)]
+        previsao = df[~df['Status'].astype(str).str.upper().isin(st_pagos)]
 
-        st.subheader("💰 Resumo de Comissões")
+        st.subheader("💰 Resumo")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Recebidas (Realizado)", f"R$ {realizado['C_Num'].sum():,.2f}")
-        m2.metric("Previsão (Pendente)", f"R$ {previsao['C_Num'].sum():,.2f}")
-        m3.metric("Potencial Total", f"R$ {df['C_Num'].sum():,.2f}")
+        m1.metric("Recebidas", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Previsão", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Total", f"R$ {df['C_Num'].sum():,.2f}")
         st.divider()
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
