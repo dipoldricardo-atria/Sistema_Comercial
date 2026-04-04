@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 9.2 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 9.3 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -13,11 +13,10 @@ URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- MOTOR DE CONVERSÃO NUMÉRICA (CRÍTICO PARA RELATÓRIOS) ---
+# --- MOTOR DE CONVERSÃO NUMÉRICA ---
 def forcar_numero(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
-        # Remove R$, espaços, pontos de milhar e troca vírgula por ponto
         v = str(valor).replace('R$', '').replace(' ', '').replace('.', '').replace(',', '.').strip()
         return float(v)
     except:
@@ -104,7 +103,7 @@ if menu == "📝 Lançar & Gestão":
         st.subheader("💸 Recebimento")
         df_f = carregar_dados_realtime()
         if not df_f.empty:
-            pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
+            pendentes = df_f[~df_f['Status'].astype(str).str.upper().str.strip().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
@@ -138,35 +137,28 @@ if menu == "📝 Lançar & Gestão":
 elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
     if not df.empty:
-        # Se não for admin, vê apenas os seus dados
         if cargo != "Admin":
             df = df[df['Vendedor'] == nome_user]
         
-        # Converte a coluna Comissão para números reais para garantir a soma correta
+        # Converte a coluna Comissão para números reais
         df['Comissao_Real'] = df['Comissão'].apply(forcar_numero)
         
-        # Define quais status são considerados "Recebidos/Pagos"
-        # Incluímos variações para evitar erro de digitação na planilha
+        # Filtros de Status (Removido erro do .strip() anterior)
+        status_limpo = df['Status'].astype(str).str.upper().str.strip()
         status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
         
-        # Filtra as linhas
-        df_pagas = df[df['Status'].astype(str).str.upper().strip().isin(status_pagos)]
-        df_pendentes = df[~df['Status'].astype(str).str.upper().strip().isin(status_pagos)]
+        df_pagas = df[status_limpo.isin(status_pagos)]
+        df_pendentes = df[~status_limpo.isin(status_pagos)]
         
-        # Cálculos Finais
         total_pago = df_pagas['Comissao_Real'].sum()
         total_pendente = df_pendentes['Comissao_Real'].sum()
         total_geral = df['Comissao_Real'].sum()
 
         st.subheader("💰 Painel de Comissões")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Comissões Pagas (Realizado)", f"R$ {total_pago:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        c2.metric("Comissões Pendentes (Previsão)", f"R$ {total_pendente:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        c1.metric("Pagas (Realizado)", f"R$ {total_pago:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        c2.metric("Pendentes (Previsão)", f"R$ {total_pendente:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         c3.metric("Total Acumulado", f"R$ {total_geral:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         
         st.divider()
-        st.write("### 📋 Detalhamento de Lançamentos")
-        # Formata o DataFrame para exibição
-        df_display = df.copy()
-        df_display = df_display.sort_values('TS', ascending=False)
-        st.dataframe(df_display, use_container_width=True)
+        st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
