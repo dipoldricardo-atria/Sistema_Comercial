@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-import random
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.6 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 8.7 FINANCEIRO", layout="wide", page_icon="💰")
 
-# --- CONFIGURAÇÕES FIXAS (MANTIDAS) ---
+# --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmH0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
 
 IDs = {
@@ -55,19 +54,16 @@ u = st.session_state.usuario
 cargo = u.get('cargo') or u.get('Cargo') or "Consultor"
 nome_user = u.get('nome') or u.get('Nome') or "Usuário"
 
-# BUSCA LISTA DE VENDEDORES PARA O ADMIN
 try:
     df_v = pd.read_csv(URL_USUARIOS)
     df_v.columns = [c.lower().strip() for c in df_v.columns]
     lista_vendedores = sorted(df_v['nome'].unique().tolist())
-except:
-    lista_vendedores = [nome_user]
+except: lista_vendedores = [nome_user]
 
+menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatórios"])
 if st.sidebar.button("🚪 Sair"):
     st.session_state.logado = False
     st.rerun()
-
-menu = st.sidebar.radio("Navegação", ["📝 Lançar & Editar", "📊 Relatório & Previsões"])
 
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
@@ -83,76 +79,83 @@ def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_
     elif f_parc == 0 and f_entrada == 0: enviar("À Vista", f_data, f_total)
 
 # --- TELAS ---
-if menu == "📝 Lançar & Editar":
-    tabs = st.tabs(["🆕 Novo Lançamento", "✏️ Gestão Admin"])
+if menu == "📝 Lançar & Gestão":
+    tabs = st.tabs(["🆕 Novo Lançamento", "💰 Dar Baixa (Financeiro)", "✏️ Editar/Apagar"])
     
     with tabs[0]:
         with st.form("novo_venda", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            f_cli = c1.text_input("Nome do Cliente")
-            f_data = c2.date_input("Data do Contrato", format="DD/MM/YYYY")
-            
-            # AQUI: Se for Admin, mostra todos. Se não, trava no nome dele.
-            vendedor_selecionado = st.selectbox("Vendedor Responsável", lista_vendedores, 
-                                               index=lista_vendedores.index(nome_user) if nome_user in lista_vendedores else 0)
-            
-            f_tot = c1.number_input("Valor Total (R$)", min_value=0.0)
+            f_cli = c1.text_input("Cliente")
+            f_data = c2.date_input("Data", format="DD/MM/YYYY")
+            f_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(nome_user) if nome_user in lista_vendedores else 0)
+            f_tot = c1.number_input("Total (R$)", min_value=0.0)
             f_ent = c2.number_input("Entrada (R$)", min_value=0.0)
-            f_pa = st.number_input("Quantidade de Parcelas", min_value=0, step=1)
-            
-            enviar_btn = st.form_submit_button("🚀 GRAVAR NOVO CONTRATO")
-            
-            if enviar_btn:
-                if f_cli and f_tot > 0:
-                    id_novo = f"ID{int(time.time())}"
-                    executar_gravacao(f_cli, vendedor_selecionado, f_data, f_tot, f_ent, f_pa, id_novo)
-                    st.success(f"✅ Sucesso! Contrato de {f_cli} gravado para {vendedor_selecionado}.")
-                    time.sleep(1)
-                    st.rerun() # FORÇA O REFRESH TOTAL DA PÁGINA
-                else:
-                    st.error("Preencha o nome do cliente e o valor total.")
+            f_pa = st.number_input("Parcelas", min_value=0, step=1)
+            if st.form_submit_button("🚀 GRAVAR CONTRATO"):
+                id_novo = f"ID{int(time.time())}"
+                executar_gravacao(f_cli, f_vend, f_data, f_tot, f_ent, f_pa, id_novo)
+                st.success("Gravado!"); time.sleep(1); st.rerun()
 
     with tabs[1]:
+        st.markdown("### 💸 Baixa de Pagamentos")
+        df_baixa = carregar_dados_realtime()
+        if not df_baixa.empty:
+            # Filtra apenas o que está Pendente
+            pendentes_list = df_baixa[df_baixa['Status'].str.upper() == "PENDENTE"]
+            contratos_abertos = pendentes_list.groupby(['ID_Contrato', 'Cliente']).size().reset_index()
+            dict_contratos = {f"{r['Cliente']} ({r['ID_Contrato']})": r['ID_Contrato'] for i, r in contratos_abertos.iterrows()}
+            
+            sel_c = st.selectbox("Escolha o Cliente/Contrato:", ["Selecione..."] + list(dict_contratos.keys()))
+            
+            if sel_c != "Selecione...":
+                id_sel = dict_contratos[sel_c]
+                parcelas = df_baixa[df_baixa['ID_Contrato'] == id_sel]
+                
+                for i, row in parcelas.iterrows():
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    col1.write(f"**{row['Tipo']}** - Venc: {row['Vencimento']}")
+                    col2.write(f"Valor: R$ {row['Valor']}")
+                    if row['Status'].upper() == "PENDENTE":
+                        if col3.button(f"Dar Baixa", key=f"btn_{row['TS']}"):
+                            # Chamada para o Google Script mudar o status na linha específica (TS é a chave)
+                            requests.get(SCRIPT_URL, params={"ts": row['TS'], "action": "marcarPago"})
+                            st.success("Pago!"); time.sleep(0.5); st.rerun()
+                    else:
+                        col3.write("✅ Pago")
+
+    with tabs[2]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
         df_edit = carregar_dados_realtime()
         if not df_edit.empty:
-            contratos = df_edit[df_edit['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
+            contratos = df_edit.groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos.iterrows()}
-            sel = st.selectbox("Selecione para Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
-            
+            sel = st.selectbox("Selecione para Alterar:", ["Selecione..."] + list(opcoes.keys()))
             if sel != "Selecione...":
                 dados = opcoes[sel]
-                col_ed, col_del = st.columns([2, 1])
-                with col_ed:
-                    with st.form("edicao_venda"):
-                        e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                        e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
-                        e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
-                        e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
-                        e_ent = st.number_input("Entrada/Pago", min_value=0.0)
-                        e_pa = st.number_input("Parcelas", min_value=0, step=1)
-                        if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
-                            requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                            executar_gravacao(e_cli, e_vend, e_data, e_tot, e_ent, e_pa, dados['ID_Contrato'])
-                            st.success("Alterado!"); time.sleep(1); st.rerun()
-                with col_del:
-                    if st.button("🔥 APAGAR TUDO", type="primary"):
+                with st.form("edicao"):
+                    e_cli = st.text_input("Cliente", value=dados['Cliente'])
+                    e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
+                    if st.form_submit_button("✅ SALVAR TUDO"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
+                        executar_gravacao(e_cli, dados['Vendedor'], pd.to_datetime(dados['Data_Base']), e_tot, 0, 0, dados['ID_Contrato'])
                         st.rerun()
+                if st.button("🔥 APAGAR CONTRATO COMPLETO"):
+                    requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
+                    st.rerun()
 
-elif menu == "📊 Relatório & Previsões":
+elif menu == "📊 Relatórios":
     df = carregar_dados_realtime()
     if not df.empty:
-        if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
         df['C_Num'] = df['Comissão'].apply(limpar_valor)
-        status_pagos = ['Pago', 'Recebido', 'Entrada']
-        realizado = df[df['Status'].str.upper().isin([s.upper() for s in status_pagos])]
-        previsao = df[~df['Status'].str.upper().isin([s.upper() for s in status_pagos])]
+        # Lógica de Realizado vs Previsão
+        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
+        realizado = df[df['Status'].str.upper().isin(status_pagos)]
+        previsao = df[~df['Status'].str.upper().isin(status_pagos)]
 
-        st.subheader("💰 Painel de Comissões")
+        st.subheader("💰 Resumo de Caixa")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Realizado (Pagas)", f"R$ {realizado['C_Num'].sum():,.2f}")
-        m2.metric("Previsão (Pendentes)", f"R$ {previsao['C_Num'].sum():,.2f}")
-        m3.metric("Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
+        m1.metric("Comissões Recebidas", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Previsão Futura", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Total de Vendas", f"R$ {df['C_Num'].sum():,.2f}")
         st.divider()
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
