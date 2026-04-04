@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP COMERCIAL 5.2", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="ERP COMERCIAL 5.3", layout="wide", page_icon="🚀")
 
 # CONFIGURAÇÕES
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -15,19 +15,15 @@ URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1
 
 IDs = {"cliente": "354575898", "vendedor": "1508368855", "tipo": "2051931448", "vencimento": "440689882", "valor_parc": "1010209945", "comissao": "1053130357", "status": "852082294", "valor_total": "1567666645", "data_base": "1443725489"}
 
-if 'removidos' not in st.session_state: st.session_state.removidos = []
-
+# --- FUNÇÃO DE CARGA ---
 def carregar_dados():
     try:
         df = pd.read_csv(f"{CSV_URL}&cache={int(time.time())}")
         df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
-        # Filtra os contratos que acabamos de apagar (Filtro por minuto e cliente)
-        for r in st.session_state.removidos:
-            df = df[~((df['Cliente'] == r['cli']) & (df['TS'].str.contains(r['minuto'])))]
         return df
     except: return pd.DataFrame()
 
-# --- LOGIN (Simplificado) ---
+# --- LOGIN ---
 if 'logado' not in st.session_state: st.session_state.logado = False
 if not st.session_state.logado:
     st.title("🔐 Login")
@@ -59,27 +55,32 @@ if menu == "📝 Lançar & Gerir":
             else:
                 v_p = f_total / f_parc
                 for i in range(int(f_parc)): enviar(f"Parc {i+1}", v_p, f_data + relativedelta(months=i+1))
-            st.success("Contrato Gravado!"); time.sleep(1); st.rerun()
+            st.success("Gravado!"); time.sleep(1); st.rerun()
 
     if u['cargo'] == "Admin":
         st.divider()
         st.subheader("🗑️ Área de Exclusão")
         df_ex = carregar_dados()
         if not df_ex.empty:
-            # Agrupar para mostrar apenas UM registro por contrato (baseado no minuto e cliente)
-            df_ex['Minuto'] = df_ex['TS'].str.substring(0, 16) if hasattr(df_ex['TS'], 'str') else df_ex['TS']
-            contratos = df_ex.groupby(['Minuto', 'Cliente', 'Total']).size().reset_index()
+            # Lógica corrigida para agrupar contratos (usando os primeiros 16 caracteres do TS como ID do minuto)
+            df_ex['Min_ID'] = df_ex['TS'].astype(str).str[:16]
             
-            opcoes = [f"{r['Minuto']} | {r['Cliente']} | R$ {r['Total']}" for i, r in contratos.iterrows()]
-            sel = st.selectbox("Selecione o contrato para remover INTEIRO:", ["Selecione..."] + opcoes)
+            # Criamos a lista de contratos únicos
+            contratos = df_ex.groupby(['Min_ID', 'Cliente', 'Total']).size().reset_index()
             
-            if sel != "Selecione..." and st.button("🔥 APAGAR TUDO DESTE LANÇAMENTO", type="primary"):
-                minuto, cliente, total = sel.split(" | ")
-                with st.spinner("Excluindo parcelas..."):
-                    # Mandamos o TS completo para o Script tratar
-                    r = requests.get(SCRIPT_URL, params={"cli": cliente, "ts": minuto, "action": "deleteContrato"})
+            opcoes = {}
+            for _, r in contratos.iterrows():
+                label = f"{r['Min_ID']} | {r['Cliente']} | R$ {r['Total']}"
+                opcoes[label] = {"minuto": r['Min_ID'], "cliente": r['Cliente']}
+            
+            sel = st.selectbox("Selecione o contrato para remover:", ["Selecione..."] + list(opcoes.keys()))
+            
+            if sel != "Selecione..." and st.button("🔥 APAGAR CONTRATO COMPLETO", type="primary"):
+                dados = opcoes[sel]
+                with st.spinner("Excluindo..."):
+                    # Mandamos para o script o cliente e o minuto (Min_ID)
+                    r = requests.get(SCRIPT_URL, params={"cli": dados['cliente'], "ts": dados['minuto'], "action": "deleteContrato"})
                 
-                st.session_state.removidos.append({'cli': cliente, 'minuto': minuto})
                 st.info(f"Retorno: {r.text}")
                 time.sleep(2); st.rerun()
 
