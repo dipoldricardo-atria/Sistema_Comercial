@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 10.2 ADMIN FLOW", layout="wide", page_icon="📈")
+st.set_page_config(page_title="ERP 10.3 ADMIN FLOW", layout="wide", page_icon="📈")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -150,36 +150,31 @@ elif menu == "📊 Relatório & Previsões":
         status_limpo = df['Status'].astype(str).str.upper().str.strip()
         status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
         
-        # --- CÁLCULO DE COMISSÕES (EXISTENTE) ---
+        # --- CÁLCULO DE COMISSÕES ---
         comis_paga = df[status_limpo.isin(status_pagos)]['C_Num'].sum()
         comis_pend = df[~status_limpo.isin(status_pagos)]['C_Num'].sum()
 
-        # --- NOVA LÓGICA: FATURAMENTO DE PROJETOS ---
-        # 1. Total Contratado (Pega apenas 1 linha por ID_Contrato para não duplicar o total)
-        df_contratos únicos = df.drop_duplicates(subset=['ID_Contrato'])
-        total_contratado = df_contratos únicos['T_Num'].sum()
-        
-        # 2. Total Recebido (Soma dos valores das parcelas pagas)
+        # --- FATURAMENTO DE PROJETOS ---
+        df_contratos_unicos = df.drop_duplicates(subset=['ID_Contrato'])
+        total_contratado = df_contratos_unicos['T_Num'].sum()
         total_recebido = df[status_limpo.isin(status_pagos)]['V_Num'].sum()
-        
-        # 3. Total a Receber (Soma dos valores das parcelas pendentes)
         total_a_receber = df[~status_limpo.isin(status_pagos)]['V_Num'].sum()
 
         # --- INTERFACE ---
-        st.subheader("💰 Resumo de Comissões (Seu Ganho)")
+        st.subheader("💰 Suas Comissões")
         m1, m2, m3 = st.columns(3)
         m1.metric("Comissões Pagas", f"R$ {comis_paga:,.2f}")
-        m2.metric("Comissões a Receber", f"R$ {comis_pend:,.2f}")
-        m3.metric("Total Comissões", f"R$ {comis_paga + comis_pend:,.2f}")
+        m2.metric("A Receber (Previsão)", f"R$ {comis_pend:,.2f}")
+        m3.metric("Total Acumulado", f"R$ {comis_paga + comis_pend:,.2f}")
 
         st.divider()
         
-        st.subheader("🏢 Faturamento de Projetos (Valor de Venda)")
+        st.subheader("🏢 Gestão de Projetos (Vendas Brutas)")
         f1, f2, f3 = st.columns(3)
-        f1.metric("Total Contratado", f"R$ {total_contratado:,.2f}", help="Soma do valor total de todos os contratos fechados.")
-        f2.metric("Total já Recebido", f"R$ {total_recebido:,.2f}", help="Soma das entradas e parcelas já pagas.")
-        f3.metric("Saldo a Receber", f"R$ {total_a_receber:,.2f}", help="Soma de todas as parcelas que ainda constam como Pendente.")
+        f1.metric("Total Contratado", f"R$ {total_contratado:,.2f}")
+        f2.metric("Total já Recebido", f"R$ {total_recebido:,.2f}")
+        f3.metric("Saldo em Aberto", f"R$ {total_a_receber:,.2f}")
 
         st.divider()
-        st.write("### 📋 Listagem Geral")
+        st.write("### 📋 Listagem Detalhada")
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
