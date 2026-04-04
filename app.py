@@ -14,7 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-st.set_page_config(page_title="ERP 14.4 FINAL", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 14.5 FINAL", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -42,25 +42,18 @@ def carregar_dados_realtime():
         return df
     except: return pd.DataFrame()
 
-# --- MOTOR DE PDF CORRIGIDO ---
+# --- MOTOR DE PDF CORRIGIDO (HexColor com H maiúsculo) ---
 def gerar_pdf_espelho(df_filtrado, metrics, period):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     elements = []
     styles = getSampleStyleSheet()
     
-    # Estilo do Título
+    cor_primaria = colors.HexColor("#1f4e79")
+    cor_fundo = colors.HexColor("#f2f2f2")
+
     style_title = ParagraphStyle(name='TitleBR', parent=styles['Title'], fontSize=18, spaceAfter=20)
-    
-    # Estilo H2 Corrigido (sem o argumento que causou conflito)
-    style_h2 = ParagraphStyle(
-        name='H2', 
-        parent=styles['Heading2'], 
-        fontSize=14, 
-        spaceBefore=15, 
-        spaceAfter=10
-    )
-    style_h2.textColor = colors.hexColor("#1f4e79") # Atribuição direta para evitar erro
+    style_h2 = ParagraphStyle(name='H2', parent=styles['Heading2'], fontSize=14, spaceBefore=15, spaceAfter=10, textColor=cor_primaria)
 
     elements.append(Paragraph(f"<b>RELATÓRIO DE DESEMPENHO COMERCIAL</b>", style_title))
     elements.append(Paragraph(f"<b>Período:</b> {period['inicio']} a {period['fim']}", styles['Normal']))
@@ -72,7 +65,7 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
               [metrics.get('total', '0'), metrics.get('atingimento', '0'), metrics.get('caixa', '0'), metrics.get('saldo', '0')]]
     tm = Table(m_data, colWidths=[130, 130, 130, 130])
     tm.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")),
+        ('BACKGROUND', (0,0), (-1,0), cor_fundo),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTSIZE', (0,0), (-1,-1), 9)
@@ -87,7 +80,7 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
         s_data.append([str(r['Status']), f"R$ {r['V_Num']:,.2f}"])
     ts = Table(s_data, colWidths=[260, 260])
     ts.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.hexColor("#1f4e79")),
+        ('BACKGROUND', (0,0), (-1,0), cor_primaria),
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
     ]))
@@ -110,7 +103,8 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
         ('BACKGROUND', (0,0), (-1,0), colors.grey),
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('FONTSIZE', (0,0), (-1,-1), 8),
-        ('GRID', (0,0), (-1,-1), 0.2, colors.black)
+        ('GRID', (0,0), (-1,-1), 0.2, colors.black),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [cor_fundo, colors.white])
     ]))
     elements.append(td)
     doc.build(elements)
@@ -197,12 +191,9 @@ if menu == "📊 Dashboard Analytics":
         }
         periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
         
-        # Gerar PDF
-        try:
-            pdf_data = gerar_pdf_espelho(df, res_metrics, periodo)
-            st.download_button("📄 BAIXAR RELATÓRIO PDF", data=pdf_data, file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao gerar PDF: {e}")
+        # Botão de Download PDF
+        pdf_data = gerar_pdf_espelho(df, res_metrics, periodo)
+        st.download_button("📄 BAIXAR RELATÓRIO PDF", data=pdf_data, file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
 
         st.divider()
         c1, c2, c3, c4 = st.columns(4)
