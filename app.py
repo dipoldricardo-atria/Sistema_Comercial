@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.6 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 8.6.1 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -97,7 +97,7 @@ if menu == "📝 Lançar & Gestão":
                 if f_cli and f_tot > 0:
                     id_novo = f"ID{int(time.time())}"
                     executar_gravacao(f_cli, vendedor_selecionado, f_data, f_tot, f_ent, f_pa, id_novo)
-                    st.success(f"✅ Gravado com sucesso!")
+                    st.success(f"✅ Gravado!")
                     time.sleep(1); st.rerun()
 
     with tabs[1]:
@@ -107,8 +107,9 @@ if menu == "📝 Lançar & Gestão":
             pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
+                    # A CHAVE (key) agora inclui o índice 'i' para evitar duplicidade
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
-                        if st.button(f"Confirmar Pagamento", key=f"baixa_{row['TS']}"):
+                        if st.button(f"Confirmar Pagamento", key=f"baixa_{row['TS']}_{i}"):
                             requests.get(SCRIPT_URL, params={"ts": str(row['TS']), "action": "marcarPago"})
                             st.success("Status atualizado!"); time.sleep(0.5); st.rerun()
             else: st.info("Nenhuma parcela pendente.")
@@ -131,7 +132,7 @@ if menu == "📝 Lançar & Gestão":
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
                         st.rerun()
-                if st.button("🔥 APAGAR TUDO", type="primary"):
+                if st.button("🔥 APAGAR TUDO", type="primary", key="btn_delete_total"):
                     requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                     st.rerun()
 
@@ -140,9 +141,9 @@ elif menu == "📊 Relatório & Previsões":
     if not df.empty:
         if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
         df['C_Num'] = df['Comissão'].apply(limpar_valor)
-        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
-        realizado = df[df['Status'].astype(str).str.upper().isin(status_pagos)]
-        previsao = df[~df['Status'].astype(str).str.upper().isin(status_pagos)]
+        st_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
+        realizado = df[df['Status'].astype(str).str.upper().isin(st_pagos)]
+        previsao = df[~df['Status'].astype(str).str.upper().isin(st_pagos)]
         st.subheader("💰 Painel de Comissões")
         m1, m2, m3 = st.columns(3)
         m1.metric("Realizado (Pagas)", f"R$ {realizado['C_Num'].sum():,.2f}")
