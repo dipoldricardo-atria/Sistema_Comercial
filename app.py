@@ -6,7 +6,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 # --- CONFIGURAÇÕES MESTRAS ---
-st.set_page_config(page_title="ERP COMERCIAL 4.4", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="ERP COMERCIAL 4.5", layout="wide", page_icon="🚀")
 
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
 CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?output=csv"
@@ -19,9 +19,13 @@ IDs = {
     "status": "852082294", "valor_total": "1567666645", "data_base": "1443725489"
 }
 
+# Função de carga com Cache-Busting agressivo
 def carregar_dados(url):
-    try: return pd.read_csv(f"{url}&t={int(time.time())}")
-    except: return pd.DataFrame()
+    # O parâmetro 't' com timestamp atual força o Google a não mandar uma versão de cache
+    try: 
+        return pd.read_csv(f"{url}&t={int(time.time())}")
+    except: 
+        return pd.DataFrame()
 
 # --- LOGIN ---
 if 'logado' not in st.session_state: st.session_state.logado = False
@@ -42,10 +46,10 @@ if not st.session_state.logado:
 
 u = st.session_state.info
 df_vendedores = carregar_dados(URL_USUARIOS)
-menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gerir", "📊 Apenas Relatório"])
+menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gerir", "📊 Relatório Comercial"])
 
 if menu == "📝 Lançar & Gerir":
-    st.subheader("📝 Registro de Novo Contrato")
+    st.subheader("📝 Novo Contrato")
     with st.form("venda_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         f_cli = c1.text_input("Nome do Cliente")
@@ -80,48 +84,52 @@ if menu == "📝 Lançar & Gerir":
                     resul.append(enviar(f"Parc {i+1}/{int(f_parc)}", v_p, dv))
             
             if all(s == 200 for s in resul):
-                st.success("✅ Contrato e Parcelas Gravadas!")
-                time.sleep(1); st.rerun()
+                st.success("✅ Gravado!")
+                time.sleep(2); st.rerun()
 
-    # --- SEÇÃO DE EXCLUSÃO (APENAS ADMIN) ---
+    # --- SEÇÃO DE EXCLUSÃO (LIMPEZA AGRESSIVA) ---
     if u['cargo'] == "Admin":
         st.divider()
-        st.subheader("🗑️ Limpeza de Contratos (Excluir Lote)")
-        df_excluir = carregar_dados(CSV_URL)
-        if not df_excluir.empty:
-            df_excluir.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
+        st.subheader("🗑️ Gerenciar/Excluir Contratos")
+        
+        # Recarregar dados especificamente para a lista de exclusão
+        df_ex = carregar_dados(CSV_URL)
+        
+        if not df_ex.empty:
+            df_ex.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
             
-            # Criamos uma lista única de contratos (Cliente + Data)
-            contratos_unicos = df_excluir.groupby(['Cliente', 'Data_Base', 'Total']).size().reset_index()
-            opcoes_excluir = [f"{row['Cliente']} | {row['Data_Base']} | Total: R$ {row['Total']}" for i, row in contratos_unicos.iterrows()]
+            # Agrupar para mostrar apenas contratos únicos
+            contratos = df_ex.groupby(['Cliente', 'Data_Base', 'Total']).size().reset_index()
+            opcoes = [f"{r['Cliente']} | {r['Data_Base']} | R$ {r['Total']}" for i, r in contratos.iterrows()]
             
-            selecionado = st.selectbox("Selecione o Contrato para remover TODAS as parcelas:", ["Selecione..."] + opcoes_excluir)
+            selecionado = st.selectbox("Escolha um contrato para REMOVER INTEIRO:", ["Selecione..."] + opcoes, key="del_box")
             
             if selecionado != "Selecione...":
-                cli_sel = selecionado.split(" | ")[0]
-                data_sel = selecionado.split(" | ")[1]
+                c_cli, c_data, c_total = selecionado.split(" | ")
                 
-                # Identifica as linhas físicas na planilha que batem com esse contrato
-                # Somamos 2 pois o Pandas ignora o cabeçalho e começa do 0
-                linhas_para_deletar = df_excluir[(df_excluir['Cliente'] == cli_sel) & (df_excluir['Data_Base'] == data_sel)].index.tolist()
-                linhas_planilha = [i + 2 for i in linhas_para_deletar]
+                # Filtrar as linhas exatas
+                linhas_idx = df_ex[(df_ex['Cliente'] == c_cli) & (df_ex['Data_Base'] == c_data)].index.tolist()
+                linhas_reais = [i + 2 for i in linhas_idx]
                 
-                if st.button(f"⚠️ EXCLUIR CONTRATO INTEIRO ({len(linhas_planilha)} LINHAS)"):
-                    # Ordenamos as linhas de trás para frente para não perder o índice ao deletar
-                    linhas_ordenadas = sorted(linhas_planilha, reverse=True)
-                    progresso = st.progress(0)
-                    for idx, linha in enumerate(linhas_ordenadas):
-                        requests.get(f"{SCRIPT_URL}?row={linha}&action=delete")
-                        progresso.progress((idx + 1) / len(linhas_ordenadas))
+                if st.button(f"⚠️ APAGAR CONTRATO ({len(linhas_reais)} lançamentos)", type="primary"):
+                    linhas_reverse = sorted(linhas_reais, reverse=True)
                     
-                    st.error(f"Contrato de {cli_sel} removido permanentemente.")
-                    time.sleep(1.5); st.rerun()
+                    with st.spinner("Limpando base de dados..."):
+                        for l in linhas_reverse:
+                            requests.get(f"{SCRIPT_URL}?row={l}&action=delete")
+                    
+                    st.error("Contrato Removido!")
+                    # Delay maior para o Google processar a exclusão física do arquivo
+                    time.sleep(3) 
+                    st.rerun()
 
-elif menu == "📊 Apenas Relatório":
-    st.subheader("📊 Visualização de Lançamentos")
+elif menu == "📊 Relatório Comercial":
+    st.subheader("📊 Relatório Comercial")
     df = carregar_dados(CSV_URL)
     if not df.empty:
         df.columns = ['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base']
         if u['cargo'] != "Admin": df = df[df['Vendedor'] == u['nome']]
+        # Formatação visual para o relatório
         df['Vencimento'] = pd.to_datetime(df['Vencimento']).dt.strftime('%d/%m/%Y')
+        df['Data_Base'] = pd.to_datetime(df['Data_Base']).dt.strftime('%d/%m/%Y')
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
