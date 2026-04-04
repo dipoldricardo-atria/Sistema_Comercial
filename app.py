@@ -1,4 +1,5 @@
 import streamlit as st
+import pd as pd
 import pandas as pd
 import requests
 import time
@@ -13,11 +14,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
 
-st.set_page_config(page_title="ERP 14.1 MIRROR REPORT", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 14.2 FINAL", layout="wide", page_icon="📊")
 
-# --- CONFIGURAÇÕES & MOTOR DE DADOS ---
+# --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
 
@@ -41,7 +41,7 @@ def carregar_dados_realtime():
         return df
     except: return pd.DataFrame()
 
-# --- MOTOR DE PDF (EXATAMENTE COMO O SEU) ---
+# --- MOTOR DE PDF ---
 def gerar_pdf_espelho(df_filtrado, metrics, period):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -59,7 +59,7 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     m_data = [["TOTAL CONTRATADO", "ATINGIMENTO META", "JÁ EM CAIXA", "SALDO A RECEBER"],
               [metrics['total'], metrics['atingimento'], metrics['caixa'], metrics['saldo']]]
     tm = Table(m_data, colWidths=[130, 130, 130, 130])
-    tm.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.hexColor("#f2f2f2")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.black), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 10), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
+    tm.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey)]))
     elements.append(tm)
 
     elements.append(Paragraph("2. SAÚDE DOS RECEBIMENTOS (POR STATUS)", style_h2))
@@ -68,7 +68,7 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     for _, r in status_df.iterrows():
         s_data.append([str(r['Status']), f"R$ {r['V_Num']:,.2f}"])
     ts = Table(s_data, colWidths=[260, 260])
-    ts.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.hexColor("#1f4e79")), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)]))
+    ts.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#1f4e79")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.grey)]))
     elements.append(ts)
 
     elements.append(PageBreak())
@@ -78,14 +78,12 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     for _, row in df_sorted.iterrows():
         d_data.append([str(row['Cliente'])[:20], str(row['Tipo']), pd.to_datetime(row['Vencimento']).strftime('%d/%m/%Y'), f"R$ {para_numero_puro(row['Valor']):,.2f}", str(row['Status'])])
     td = Table(d_data, repeatRows=1, colWidths=[150, 100, 80, 100, 90])
-    td.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('FONTSIZE', (0, 0), (-1, -1), 8), ('GRID', (0, 0), (-1, -1), 0.2, colors.black), ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white])]))
+    td.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.grey), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.2, colors.black)]))
     elements.append(td)
-
     doc.build(elements)
     buffer.seek(0)
     return buffer
 
-# --- MOTOR DE GRAVAÇÃO ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -115,14 +113,16 @@ u = st.session_state.usuario
 cargo = u.get('cargo') or u.get('Cargo') or "Consultor"
 nome_user = u.get('nome') or u.get('Nome') or "Usuário"
 
-# --- SIDEBAR (FILTROS) ---
+# --- CARREGAMENTO INICIAL (PREVENTIVO) ---
+df_raw = carregar_dados_realtime()
+vendedores_lista = sorted(df_raw['Vendedor'].unique().tolist()) if not df_raw.empty else [nome_user]
+
+# --- SIDEBAR ---
 st.sidebar.header("🎯 Gestão & Metas")
 meta_mensal = st.sidebar.number_input("Meta Mensal (R$)", min_value=0.0, value=100000.0)
 st.sidebar.divider()
-df_raw = carregar_dados_realtime()
 
 if not df_raw.empty:
-    vendedores_lista = sorted(df_raw['Vendedor'].unique().tolist())
     vendedores_sel = st.sidebar.multiselect("Vendedores", vendedores_lista, default=vendedores_lista) if cargo == "Admin" else [nome_user]
     hoje = date.today()
     data_inicio = st.sidebar.date_input("Início", value=hoje - relativedelta(months=1), format="DD/MM/YYYY")
@@ -137,50 +137,52 @@ if not df_raw.empty:
         pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
         df = df[st_l.isin(pgs)] if status_filtro == "Pago" else df[~st_l.isin(pgs)]
     if busca_cliente != "Todos": df = df[df['Cliente'] == busca_cliente]
+else:
+    df = pd.DataFrame()
 
-# --- NAVEGAÇÃO ---
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Dashboard Analytics"])
 
-# --- TELA DASHBOARD (SUA LÓGICA INTACTA) ---
-if menu == "📊 Dashboard Analytics" and not df.empty:
-    df['V_Num'] = df['Valor'].apply(para_numero_puro); df['T_Num'] = df['Total'].apply(para_numero_puro)
-    df_unicos = df.drop_duplicates(subset=['ID_Contrato'])
-    t_contratado = df_unicos['T_Num'].sum()
-    atingimento = (t_contratado / meta_mensal * 100) if meta_mensal > 0 else 0
-    pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
-    v_recebido = df[st_l.isin(pgs)]['V_Num'].sum()
-    
-    st.title("🚀 Business Intelligence Executivo")
-    
-    res_metrics = {"total": f"R$ {t_contratado:,.2f}", "atingimento": f"{atingimento:.1f}%", "caixa": f"R$ {v_recebido:,.2f}", "saldo": f"R$ {t_contratado - v_recebido:,.2f}"}
-    periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
-    
-    pdf_file = gerar_pdf_espelho(df, res_metrics, periodo)
-    st.download_button("📄 BAIXAR RELATÓRIO ESPELHO (PDF)", data=pdf_file, file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+if menu == "📊 Dashboard Analytics":
+    if not df.empty:
+        df['V_Num'] = df['Valor'].apply(para_numero_puro)
+        df['T_Num'] = df['Total'].apply(para_numero_puro)
+        df_unicos = df.drop_duplicates(subset=['ID_Contrato'])
+        t_contratado = df_unicos['T_Num'].sum()
+        atingimento = (t_contratado / meta_mensal * 100) if meta_mensal > 0 else 0
+        pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
+        v_recebido = df[st_l.isin(pgs)]['V_Num'].sum()
+        
+        st.title("🚀 Business Intelligence Executivo")
+        
+        res_metrics = {"total": f"R$ {t_contratado:,.2f}", "atingimento": f"{atingimento:.1f}%", "caixa": f"R$ {v_recebido:,.2f}", "saldo": f"R$ {t_contratado - v_recebido:,.2f}"}
+        periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
+        
+        st.download_button("📄 BAIXAR RELATÓRIO ESPELHO (PDF)", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
 
-    st.divider()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Contratado", res_metrics['total'])
-    c2.metric("Atingimento Meta", res_metrics['atingimento'])
-    c3.metric("Já em Caixa", res_metrics['caixa'])
-    c4.metric("Saldo a Receber", res_metrics['saldo'])
-    
-    st.divider()
-    g1, g2 = st.columns([2, 1])
-    with g1:
-        st.subheader("📅 Evolução Mensal")
-        st.plotly_chart(px.line(df_unicos.groupby('Mes_Ano')['T_Num'].sum().reset_index(), x='Mes_Ano', y='T_Num', markers=True), use_container_width=True)
-    with g2:
-        st.subheader("👥 Share Vendedores")
-        st.plotly_chart(px.pie(df_unicos, values='T_Num', names='Vendedor', hole=.4), use_container_width=True)
+        st.divider()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Contratado", res_metrics['total'])
+        c2.metric("Atingimento Meta", res_metrics['atingimento'])
+        c3.metric("Já em Caixa", res_metrics['caixa'])
+        c4.metric("Saldo a Receber", res_metrics['saldo'])
+        
+        st.divider()
+        g1, g2 = st.columns([2, 1])
+        with g1:
+            st.subheader("📅 Evolução Mensal")
+            st.plotly_chart(px.line(df_unicos.groupby('Mes_Ano')['T_Num'].sum().reset_index(), x='Mes_Ano', y='T_Num', markers=True), use_container_width=True)
+        with g2:
+            st.subheader("👥 Share Vendedores")
+            st.plotly_chart(px.pie(df_unicos, values='T_Num', names='Vendedor', hole=.4), use_container_width=True)
 
-    st.subheader("🏦 Saúde dos Recebimentos")
-    st.plotly_chart(px.bar(df.groupby('Status')['V_Num'].sum().reset_index(), x='Status', y='V_Num', color='Status', text_auto='.2s'), use_container_width=True)
+        st.subheader("🏦 Saúde dos Recebimentos")
+        st.plotly_chart(px.bar(df.groupby('Status')['V_Num'].sum().reset_index(), x='Status', y='V_Num', color='Status', text_auto='.2s'), use_container_width=True)
 
-    st.subheader("📋 Detalhamento das Operações")
-    st.dataframe(df.sort_values('Data_Base', ascending=False), use_container_width=True)
+        st.subheader("📋 Detalhamento das Operações")
+        st.dataframe(df.sort_values('Data_Base', ascending=False), use_container_width=True)
+    else:
+        st.warning("Sem dados para os filtros selecionados.")
 
-# --- TELA LANÇAMENTOS (RECONSTRUÍDA COM BASE NA 12.2) ---
 elif menu == "📝 Lançar & Gestão":
     tabs = st.tabs(["🆕 Novo Lançamento", "💰 Dar Baixa (Financeiro)", "✏️ Gestão Admin"])
     
@@ -189,7 +191,7 @@ elif menu == "📝 Lançar & Gestão":
             c1, c2 = st.columns(2)
             f_cli = c1.text_input("Nome do Cliente")
             f_data = c2.date_input("Data do Contrato", format="DD/MM/YYYY")
-            v_sel = st.selectbox("Vendedor", vendedores_lista if cargo == "Admin" else [nome_user])
+            v_sel = st.selectbox("Vendedor", vendedores_lista)
             f_tot = c1.number_input("Valor Total", min_value=0.0)
             f_ent = c2.number_input("Entrada", min_value=0.0)
             f_pa = st.number_input("Parcelas", min_value=0, step=1)
@@ -212,12 +214,12 @@ elif menu == "📝 Lançar & Gestão":
     with tabs[2]:
         if cargo == "Admin":
             st.subheader("✏️ Administração de Contratos")
-            st.info("Aqui você pode excluir contratos inteiros do banco de dados.")
-            contratos = df_raw[df_raw['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total']).size().reset_index()
-            sel = st.selectbox("Selecione para Excluir:", ["Selecione..."] + [f"{r['ID_Contrato']} | {r['Cliente']}" for i, r in contratos.iterrows()])
-            if sel != "Selecione..." and st.button("🔥 EXCLUIR CONTRATO", type="primary"):
-                id_excluir = sel.split(" | ")[0]
-                requests.get(SCRIPT_URL, params={"id_contrato": id_excluir, "action": "deleteContrato"})
-                st.warning("Excluído!"); time.sleep(1); st.rerun()
+            if not df_raw.empty:
+                contratos = df_raw[df_raw['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total']).size().reset_index()
+                sel = st.selectbox("Selecione para Excluir:", ["Selecione..."] + [f"{r['ID_Contrato']} | {r['Cliente']}" for i, r in contratos.iterrows()])
+                if sel != "Selecione..." and st.button("🔥 EXCLUIR CONTRATO", type="primary"):
+                    id_excluir = sel.split(" | ")[0]
+                    requests.get(SCRIPT_URL, params={"id_contrato": id_excluir, "action": "deleteContrato"})
+                    st.warning("Excluído!"); time.sleep(1); st.rerun()
         else:
-            st.error("Acesso restrito ao administrador.")
+            st.error("Acesso restrito.")
