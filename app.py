@@ -1,5 +1,4 @@
 import streamlit as st
-import pd as pd
 import pandas as pd
 import requests
 import time
@@ -15,7 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-st.set_page_config(page_title="ERP 14.2 FINAL", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 14.3 FINAL", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -35,7 +34,9 @@ def para_numero_puro(valor):
 def carregar_dados_realtime():
     try:
         r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
-        df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
+        data = r.json()
+        if len(data) <= 1: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
         df['Data_Base_DT'] = pd.to_datetime(df['Data_Base'], errors='coerce').dt.date
         df['Mes_Ano'] = pd.to_datetime(df['Data_Base'], errors='coerce').dt.strftime('%Y-%m')
         return df
@@ -59,10 +60,11 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     m_data = [["TOTAL CONTRATADO", "ATINGIMENTO META", "JÁ EM CAIXA", "SALDO A RECEBER"],
               [metrics['total'], metrics['atingimento'], metrics['caixa'], metrics['saldo']]]
     tm = Table(m_data, colWidths=[130, 130, 130, 130])
-    tm.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey)]))
+    tm.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTSIZE', (0,0), (-1,-1), 9)]))
     elements.append(tm)
 
     elements.append(Paragraph("2. SAÚDE DOS RECEBIMENTOS (POR STATUS)", style_h2))
+    df_filtrado['V_Num'] = df_filtrado['Valor'].apply(para_numero_puro)
     status_df = df_filtrado.groupby('Status')['V_Num'].sum().reset_index()
     s_data = [["Status do Lançamento", "Valor Acumulado"]]
     for _, r in status_df.iterrows():
@@ -113,7 +115,7 @@ u = st.session_state.usuario
 cargo = u.get('cargo') or u.get('Cargo') or "Consultor"
 nome_user = u.get('nome') or u.get('Nome') or "Usuário"
 
-# --- CARREGAMENTO INICIAL (PREVENTIVO) ---
+# --- INICIALIZAÇÃO DE DADOS ---
 df_raw = carregar_dados_realtime()
 vendedores_lista = sorted(df_raw['Vendedor'].unique().tolist()) if not df_raw.empty else [nome_user]
 
@@ -133,6 +135,7 @@ if not df_raw.empty:
     df = df_raw.copy()
     df = df[df['Vendedor'].isin(vendedores_sel)]
     df = df[(df['Data_Base_DT'] >= data_inicio) & (df['Data_Base_DT'] <= data_fim)]
+    
     if status_filtro != "Todos":
         pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
         df = df[st_l.isin(pgs)] if status_filtro == "Pago" else df[~st_l.isin(pgs)]
@@ -147,6 +150,7 @@ if menu == "📊 Dashboard Analytics":
         df['V_Num'] = df['Valor'].apply(para_numero_puro)
         df['T_Num'] = df['Total'].apply(para_numero_puro)
         df_unicos = df.drop_duplicates(subset=['ID_Contrato'])
+        
         t_contratado = df_unicos['T_Num'].sum()
         atingimento = (t_contratado / meta_mensal * 100) if meta_mensal > 0 else 0
         pgs = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']; st_l = df['Status'].astype(str).str.upper().str.strip()
@@ -157,7 +161,7 @@ if menu == "📊 Dashboard Analytics":
         res_metrics = {"total": f"R$ {t_contratado:,.2f}", "atingimento": f"{atingimento:.1f}%", "caixa": f"R$ {v_recebido:,.2f}", "saldo": f"R$ {t_contratado - v_recebido:,.2f}"}
         periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
         
-        st.download_button("📄 BAIXAR RELATÓRIO ESPELHO (PDF)", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+        st.download_button("📄 BAIXAR RELATÓRIO PDF", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
 
         st.divider()
         c1, c2, c3, c4 = st.columns(4)
@@ -185,7 +189,6 @@ if menu == "📊 Dashboard Analytics":
 
 elif menu == "📝 Lançar & Gestão":
     tabs = st.tabs(["🆕 Novo Lançamento", "💰 Dar Baixa (Financeiro)", "✏️ Gestão Admin"])
-    
     with tabs[0]:
         with st.form("novo_venda", clear_on_submit=True):
             c1, c2 = st.columns(2)
