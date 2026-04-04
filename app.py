@@ -6,7 +6,7 @@ import random
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.5 FORECAST", layout="wide", page_icon="💰")
+st.set_page_config(page_title="ERP 8.6 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS (MANTIDAS) ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -21,7 +21,6 @@ IDs = {
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- FUNÇÃO DE LIMPEZA DE NÚMEROS (BLINDADA) ---
 def limpar_valor(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
@@ -36,7 +35,7 @@ def carregar_dados_realtime():
         return df
     except: return pd.DataFrame()
 
-# --- LOGIN (MANTIDO) ---
+# --- LOGIN ---
 if not st.session_state.logado:
     st.title("🔐 Login Master")
     with st.form("login"):
@@ -56,10 +55,20 @@ u = st.session_state.usuario
 cargo = u.get('cargo') or u.get('Cargo') or "Consultor"
 nome_user = u.get('nome') or u.get('Nome') or "Usuário"
 
-# --- MENU ---
+# BUSCA LISTA DE VENDEDORES PARA O ADMIN
+try:
+    df_v = pd.read_csv(URL_USUARIOS)
+    df_v.columns = [c.lower().strip() for c in df_v.columns]
+    lista_vendedores = sorted(df_v['nome'].unique().tolist())
+except:
+    lista_vendedores = [nome_user]
+
+if st.sidebar.button("🚪 Sair"):
+    st.session_state.logado = False
+    st.rerun()
+
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Editar", "📊 Relatório & Previsões"])
 
-# [Lógica de Gravação e Edição mantida 100% igual à v8.4 conforme solicitado]
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -75,21 +84,33 @@ def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_
 
 # --- TELAS ---
 if menu == "📝 Lançar & Editar":
-    # [ABAS DE LANÇAMENTO E EDIÇÃO - MANTIDAS]
     tabs = st.tabs(["🆕 Novo Lançamento", "✏️ Gestão Admin"])
+    
     with tabs[0]:
-        with st.form("novo"):
+        with st.form("novo_venda", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            f_cli = c1.text_input("Cliente")
-            f_data = c2.date_input("Data Base", format="DD/MM/YYYY")
-            f_vend = st.selectbox("Vendedor", [nome_user]) # Simplificado para o exemplo
-            f_tot = c1.number_input("Total (R$)", min_value=0.0)
+            f_cli = c1.text_input("Nome do Cliente")
+            f_data = c2.date_input("Data do Contrato", format="DD/MM/YYYY")
+            
+            # AQUI: Se for Admin, mostra todos. Se não, trava no nome dele.
+            vendedor_selecionado = st.selectbox("Vendedor Responsável", lista_vendedores, 
+                                               index=lista_vendedores.index(nome_user) if nome_user in lista_vendedores else 0)
+            
+            f_tot = c1.number_input("Valor Total (R$)", min_value=0.0)
             f_ent = c2.number_input("Entrada (R$)", min_value=0.0)
-            f_pa = st.number_input("Parcelas", min_value=0, step=1)
-            if st.form_submit_button("🚀 GRAVAR NOVO"):
-                id_novo = f"ID{int(time.time())}"
-                executar_gravacao(f_cli, f_vend, f_data, f_tot, f_ent, f_pa, id_novo)
-                st.success("Gravado!"); time.sleep(1); st.rerun()
+            f_pa = st.number_input("Quantidade de Parcelas", min_value=0, step=1)
+            
+            enviar_btn = st.form_submit_button("🚀 GRAVAR NOVO CONTRATO")
+            
+            if enviar_btn:
+                if f_cli and f_tot > 0:
+                    id_novo = f"ID{int(time.time())}"
+                    executar_gravacao(f_cli, vendedor_selecionado, f_data, f_tot, f_ent, f_pa, id_novo)
+                    st.success(f"✅ Sucesso! Contrato de {f_cli} gravado para {vendedor_selecionado}.")
+                    time.sleep(1)
+                    st.rerun() # FORÇA O REFRESH TOTAL DA PÁGINA
+                else:
+                    st.error("Preencha o nome do cliente e o valor total.")
 
     with tabs[1]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
@@ -97,21 +118,23 @@ if menu == "📝 Lançar & Editar":
         if not df_edit.empty:
             contratos = df_edit[df_edit['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos.iterrows()}
-            sel = st.selectbox("Contrato:", ["Selecione..."] + list(opcoes.keys()))
+            sel = st.selectbox("Selecione para Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
+            
             if sel != "Selecione...":
                 dados = opcoes[sel]
                 col_ed, col_del = st.columns([2, 1])
                 with col_ed:
-                    with st.form("edicao"):
+                    with st.form("edicao_venda"):
                         e_cli = st.text_input("Cliente", value=dados['Cliente'])
                         e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
+                        e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
                         e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
                         e_ent = st.number_input("Entrada/Pago", min_value=0.0)
                         e_pa = st.number_input("Parcelas", min_value=0, step=1)
-                        if st.form_submit_button("✅ SALVAR"):
+                        if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
                             requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                            executar_gravacao(e_cli, dados['Vendedor'], e_data, e_tot, e_ent, e_pa, dados['ID_Contrato'])
-                            st.success("OK!"); time.sleep(1); st.rerun()
+                            executar_gravacao(e_cli, e_vend, e_data, e_tot, e_ent, e_pa, dados['ID_Contrato'])
+                            st.success("Alterado!"); time.sleep(1); st.rerun()
                 with col_del:
                     if st.button("🔥 APAGAR TUDO", type="primary"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
@@ -121,28 +144,15 @@ elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
     if not df.empty:
         if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
-        
-        # Limpeza para cálculo
-        df['V_Num'] = df['Valor'].apply(limpar_valor)
         df['C_Num'] = df['Comissão'].apply(limpar_valor)
-        
-        # Separação por Realizado vs Previsão
-        status_pagos = ['Pago', 'Recebido', 'Entrada', 'PAGO', 'RECEBIDO', 'ENTRADA']
-        realizado = df[df['Status'].isin(status_pagos)]
-        previsao = df[~df['Status'].isin(status_pagos)]
+        status_pagos = ['Pago', 'Recebido', 'Entrada']
+        realizado = df[df['Status'].str.upper().isin([s.upper() for s in status_pagos])]
+        previsao = df[~df['Status'].str.upper().isin([s.upper() for s in status_pagos])]
 
-        st.subheader("💰 Painel Financeiro de Comissões")
+        st.subheader("💰 Painel de Comissões")
         m1, m2, m3 = st.columns(3)
-        
-        # 1. Realizado (O que já entrou)
-        m1.metric("Comissões Pagas (Realizado)", f"R$ {realizado['C_Num'].sum():,.2f}")
-        
-        # 2. Previsão (O que está pendente no futuro)
-        m2.metric("Comissão Futura (Previsão)", f"R$ {previsao['C_Num'].sum():,.2f}", help="Soma de todas as parcelas com status Pendente")
-        
-        # 3. Geral (O valor total do esforço de vendas)
-        m3.metric("Potencial Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
-        
+        m1.metric("Realizado (Pagas)", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Previsão (Pendentes)", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
         st.divider()
-        st.markdown("### 📑 Histórico Detalhado")
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
