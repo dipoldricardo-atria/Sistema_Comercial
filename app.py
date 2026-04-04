@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.8 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 9.0 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -111,12 +111,12 @@ if menu == "📝 Lançar & Gestão":
         st.subheader("💸 Recebimento de Parcelas")
         df_f = carregar_dados_realtime()
         if not df_f.empty:
+            # Filtro para pendentes
             pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
                         if st.button(f"Confirmar Pagamento", key=f"baixa_{i}"):
-                            # NOVA LÓGICA: Envia TS, Cliente e Valor para busca tripla
                             params = {
                                 "action": "marcarPago",
                                 "ts": str(row['TS']).strip(),
@@ -125,10 +125,10 @@ if menu == "📝 Lançar & Gestão":
                             }
                             res = requests.get(SCRIPT_URL, params=params)
                             if "Sucesso" in res.text:
-                                st.success("Pago na Planilha!"); time.sleep(0.5); st.rerun()
+                                st.success("Status atualizado para Pago!"); time.sleep(0.5); st.rerun()
                             else:
                                 st.error(f"Erro: {res.text}")
-            else: st.info("Sem pendências.")
+            else: st.info("Sem pendências financeiras.")
 
     with tabs[2]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
@@ -147,10 +147,10 @@ if menu == "📝 Lançar & Gestão":
                     if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
-                        st.rerun()
+                        st.success("Editado!"); time.sleep(1); st.rerun()
                 if st.button("🔥 EXCLUIR CONTRATO", type="primary", key="del_final"):
                     requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                    st.rerun()
+                    st.success("Excluído!"); time.sleep(1); st.rerun()
 
 elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
