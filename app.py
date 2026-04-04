@@ -5,18 +5,12 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 9.0 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 9.1 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS ---
+# Verifique se esta URL é a da sua "Nova Versão" do Google Script
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmH0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
-
-IDs = {
-    "cliente": "354575898", "vendedor": "1508368855", "tipo": "2051931448", "vencimento": "440689882",
-    "valor_parc": "1010209945", "comissao": "1053130357", "status": "852082294",
-    "valor_total": "1567666645", "data_base": "1443725489", "id_contrato": "921030482" 
-}
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
@@ -67,18 +61,24 @@ if st.sidebar.button("🚪 Sair"):
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatório & Previsões"])
 
+# --- FUNÇÃO DE GRAVAÇÃO VIA SCRIPT (UNIFICADA) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
-        p = {
-            f"entry.{IDs['cliente']}": f_cli, f"entry.{IDs['vendedor']}": f_vendedor, 
-            f"entry.{IDs['tipo']}": tipo, f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'), 
-            f"entry.{IDs['valor_parc']}": str(round(valor, 2)).replace('.', ','), 
-            f"entry.{IDs['comissao']}": str(round(comis_calc, 2)).replace('.', ','), 
-            f"entry.{IDs['status']}": "Pendente", f"entry.{IDs['valor_total']}": str(f_total).replace('.', ','), 
-            f"entry.{IDs['data_base']}": f_data.strftime('%Y-%m-%d'), f"entry.{IDs['id_contrato']}": id_final
+        params = {
+            "action": "create",
+            "cliente": f_cli,
+            "vendedor": f_vendedor,
+            "tipo": tipo,
+            "vencimento": venc.strftime('%Y-%m-%d'),
+            "valor": round(valor, 2),
+            "comissao": round(comis_calc, 2),
+            "status": "Pendente",
+            "total": f_total,
+            "data_base": f_data.strftime('%Y-%m-%d'),
+            "id_contrato": id_final
         }
-        requests.post(FORM_URL, data=p)
+        requests.get(SCRIPT_URL, params=params)
 
     if f_entrada > 0: enviar("Entrada", f_data, f_entrada)
     restante = f_total - f_entrada
@@ -96,61 +96,49 @@ if menu == "📝 Lançar & Gestão":
             c1, c2 = st.columns(2)
             f_cli = c1.text_input("Nome do Cliente")
             f_data = c2.date_input("Data do Contrato", format="DD/MM/YYYY")
-            vendedor_selecionado = st.selectbox("Vendedor Responsável", lista_vendedores, index=lista_vendedores.index(nome_user) if nome_user in lista_vendedores else 0)
+            v_sel = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(nome_user) if nome_user in lista_vendedores else 0)
             f_tot = c1.number_input("Valor Total (R$)", min_value=0.0)
             f_ent = c2.number_input("Entrada (R$)", min_value=0.0)
-            f_pa = st.number_input("Quantidade de Parcelas", min_value=0, step=1)
-            if st.form_submit_button("🚀 GRAVAR NOVO CONTRATO"):
+            f_pa = st.number_input("Parcelas", min_value=0, step=1)
+            if st.form_submit_button("🚀 GRAVAR CONTRATO"):
                 if f_cli and f_tot > 0:
-                    id_novo = f"ID{int(time.time())}"
-                    executar_gravacao(f_cli, vendedor_selecionado, f_data, f_tot, f_ent, f_pa, id_novo)
-                    st.success("✅ Gravado!")
-                    time.sleep(1); st.rerun()
+                    executar_gravacao(f_cli, v_sel, f_data, f_tot, f_ent, f_pa, f"ID{int(time.time())}")
+                    st.success("✅ Gravado com Sucesso!"); time.sleep(1); st.rerun()
 
     with tabs[1]:
-        st.subheader("💸 Recebimento de Parcelas")
+        st.subheader("💸 Recebimento")
         df_f = carregar_dados_realtime()
         if not df_f.empty:
-            # Filtro para pendentes
             pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
-                        if st.button(f"Confirmar Pagamento", key=f"baixa_{i}"):
-                            params = {
-                                "action": "marcarPago",
-                                "ts": str(row['TS']).strip(),
-                                "cliente": str(row['Cliente']).strip(),
-                                "valor": str(row['Valor']).strip()
-                            }
-                            res = requests.get(SCRIPT_URL, params=params)
-                            if "Sucesso" in res.text:
-                                st.success("Status atualizado para Pago!"); time.sleep(0.5); st.rerun()
-                            else:
-                                st.error(f"Erro: {res.text}")
-            else: st.info("Sem pendências financeiras.")
+                        if st.button(f"Confirmar Pagamento", key=f"bx_{i}"):
+                            requests.get(SCRIPT_URL, params={"action": "marcarPago", "ts": str(row['TS']), "cliente": str(row['Cliente']), "valor": str(row['Valor'])})
+                            st.rerun()
+            else: st.info("Sem pendências.")
 
     with tabs[2]:
-        if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
+        if cargo != "Admin": st.warning("Restrito."); st.stop()
         df_edit = carregar_dados_realtime()
         if not df_edit.empty:
             contratos = df_edit[df_edit['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos.iterrows()}
-            sel = st.selectbox("Selecione para Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
+            sel = st.selectbox("Editar/Apagar:", ["Selecione..."] + list(opcoes.keys()))
             if sel != "Selecione...":
                 dados = opcoes[sel]
-                with st.form("edicao_venda"):
+                with st.form("edicao"):
                     e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
+                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']))
                     e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
                     e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
-                    if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
+                    if st.form_submit_button("✅ SALVAR"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
-                        st.success("Editado!"); time.sleep(1); st.rerun()
-                if st.button("🔥 EXCLUIR CONTRATO", type="primary", key="del_final"):
+                        st.rerun()
+                if st.button("🔥 EXCLUIR", type="primary"):
                     requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                    st.success("Excluído!"); time.sleep(1); st.rerun()
+                    st.rerun()
 
 elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
@@ -160,10 +148,9 @@ elif menu == "📊 Relatório & Previsões":
         st_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
         realizado = df[df['Status'].astype(str).str.upper().isin(st_pagos)]
         previsao = df[~df['Status'].astype(str).str.upper().isin(st_pagos)]
-        st.subheader("💰 Painel de Comissões")
+        st.subheader("💰 Painel")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Realizado (Pagas)", f"R$ {realizado['C_Num'].sum():,.2f}")
-        m2.metric("Previsão (Pendentes)", f"R$ {previsao['C_Num'].sum():,.2f}")
-        m3.metric("Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
-        st.divider()
+        m1.metric("Pago", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Pendente", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Total", f"R$ {df['C_Num'].sum():,.2f}")
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
