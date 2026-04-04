@@ -6,11 +6,11 @@ import random
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.1 MASTER TOTAL", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 8.1 ESTÁVEL", layout="wide", page_icon="🛡️")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmH0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
 
 IDs = {
@@ -25,9 +25,6 @@ def carregar_dados_realtime():
     try:
         r = requests.get(f"{SCRIPT_URL}?action=read", timeout=20)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
-        # Formatação de Datas para o padrão BR na exibição
-        for col in ['Vencimento', 'Data_Base']:
-            df[col] = pd.to_datetime(df[col]).dt.strftime('%d/%m/%Y')
         return df
     except: return pd.DataFrame()
 
@@ -55,7 +52,7 @@ if st.sidebar.button("🚪 Sair"):
     st.session_state.logado = False
     st.rerun()
 
-menu = st.sidebar.radio("Navegação", ["📝 Lançar & Editar", "📊 Relatório"])
+menu = st.sidebar.radio("Navegação", ["📝 Lançar & Editar", "📊 Relatório & Totais"])
 
 try:
     df_v = pd.read_csv(URL_USUARIOS)
@@ -97,7 +94,6 @@ if menu == "📝 Lançar & Editar":
         if cargo != "Admin": st.warning("Acesso restrito ao Administrador."); st.stop()
         df_edit = carregar_dados_realtime()
         if not df_edit.empty:
-            # Agrupa para mostrar os contratos disponíveis
             contratos = df_edit[df_edit['ID_Contrato'].astype(str).str.startswith("ID")].groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos.iterrows()}
             sel = st.selectbox("Selecione o contrato para gerenciar:", ["Selecione..."] + list(opcoes.keys()))
@@ -105,37 +101,41 @@ if menu == "📝 Lançar & Editar":
             if sel != "Selecione...":
                 dados = opcoes[sel]
                 st.divider()
-                
                 col_ed, col_del = st.columns([2, 1])
-                
                 with col_ed:
                     st.markdown("### ✏️ Editar Dados")
                     with st.form("edicao"):
                         e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                        # Converter string DD/MM/AAAA de volta para data para o componente
-                        e_data_ini = datetime.strptime(dados['Data_Base'], '%d/%m/%Y')
+                        e_data_ini = pd.to_datetime(dados['Data_Base'])
                         e_data = st.date_input("Data Base", value=e_data_ini, format="DD/MM/YYYY")
                         e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
                         e_tot = st.number_input("Total (R$)", value=float(str(dados['Total']).replace(',','.')))
                         e_ent = st.number_input("Valor de Entrada/Pago (R$)", min_value=0.0)
                         e_pa = st.number_input("Número de Parcelas", min_value=0, step=1)
-                        
                         if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
                             requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                             executar_gravacao(e_cli, e_vend, e_data, e_tot, e_ent, e_pa, dados['ID_Contrato'])
                             st.success("Atualizado!"); time.sleep(1); st.rerun()
-
                 with col_del:
                     st.markdown("### 🗑️ Exclusão em Lote")
-                    st.warning("Esta ação apaga todas as parcelas deste contrato.")
                     if st.button("🔥 APAGAR TUDO AGORA", type="primary"):
-                        r = requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                        st.error(f"Sistema: {r.text}")
-                        time.sleep(2); st.rerun()
+                        requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
+                        st.error("Apagado!"); time.sleep(2); st.rerun()
 
-elif menu == "📊 Relatório":
-    st.subheader("📊 Histórico Geral (Datas em DD/MM/AAAA)")
+elif menu == "📊 Relatório & Totais":
     df = carregar_dados_realtime()
     if not df.empty:
         if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
+        
+        # --- RESUMO FINANCEIRO SIMPLES (SEM GRÁFICOS PARA NÃO DAR ERRO) ---
+        st.subheader("📌 Resumo de Caixa")
+        df_calc = df.copy()
+        df_calc['Valor_Num'] = df_calc['Valor'].astype(str).str.replace(',', '.').astype(float)
+        total_geral = df_calc['Valor_Num'].sum()
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Total Geral a Receber", f"R$ {total_geral:,.2f}")
+        c2.metric("Qtd de Parcelas", len(df_calc))
+        st.divider()
+
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
