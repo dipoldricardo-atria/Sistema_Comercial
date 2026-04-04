@@ -5,10 +5,9 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.8 FINANCEIRO", layout="wide", page_icon="💰")
+st.set_page_config(page_title="ERP 8.9 SISTEMA", layout="wide", page_icon="💰")
 
 # --- CONFIGURAÇÕES ---
-# Certifique-se de que esta URL é a do seu Script atualizado (Implantar > Gerenciar > URL)
 SCRIPT_URL = "SUA_URL_DO_SCRIPT_AQUI" 
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmH0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
@@ -21,7 +20,7 @@ IDs = {
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- FUNÇÕES DE APOIO ---
+# --- FUNÇÕES ---
 def limpar_valor(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
@@ -31,8 +30,7 @@ def limpar_valor(valor):
 
 def carregar_dados_realtime():
     try:
-        # Bypass de cache para garantir que a baixa apareça na hora
-        r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
+        r = requests.get(f"{SCRIPT_URL}?action=read", timeout=25)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
         return df
     except: return pd.DataFrame()
@@ -108,11 +106,10 @@ if menu == "📝 Lançar & Gestão":
                 st.success("Gravado!"); time.sleep(1); st.rerun()
 
     with tabs[1]:
-        st.markdown("### 💸 Baixa de Pagamentos (Caixa)")
+        st.markdown("### 💸 Baixa de Pagamentos")
         df_baixa = carregar_dados_realtime()
         if not df_baixa.empty:
-            # Filtra o que não está pago
-            pendentes = df_baixa[~df_baixa['Status'].str.upper().isin(['PAGO', 'RECEBIDO'])]
+            pendentes = df_baixa[df_baixa['Status'].str.upper() == "PENDENTE"]
             if not pendentes.empty:
                 contratos = pendentes.groupby(['ID_Contrato', 'Cliente']).size().reset_index()
                 opcoes_c = {f"{r['Cliente']} ({r['ID_Contrato']})": r['ID_Contrato'] for i, r in contratos.iterrows()}
@@ -127,18 +124,10 @@ if menu == "📝 Lançar & Gestão":
                         col1.write(f"**{row['Tipo']}** - {row['Vencimento']}")
                         col2.write(f"R$ {row['Valor']}")
                         
-                        if row['Status'].upper() not in ['PAGO', 'RECEBIDO']:
-                            # Lógica de baixa enviando o TS bruto para o Script
-                            if col3.button(f"Dar Baixa", key=f"btn_{row['TS']}"):
-                                res = requests.get(SCRIPT_URL, params={"ts": str(row['TS']).strip(), "action": "marcarPago"})
-                                if "Sucesso" in res.text or "OK" in res.text:
-                                    st.success("Status atualizado!")
-                                    time.sleep(0.5)
-                                    st.rerun()
-                                else:
-                                    st.error(f"Erro: {res.text}")
-                        else:
-                            col3.write("✅ Pago")
+                        if col3.button(f"Dar Baixa", key=f"btn_{row['TS']}"):
+                            # ENVIO DIRETO SEM FORMATAÇÃO EXTRA
+                            requests.get(SCRIPT_URL, params={"ts": row['TS'], "action": "marcarPago"})
+                            st.success("Ok!"); time.sleep(0.5); st.rerun()
             else:
                 st.info("Nenhuma parcela pendente.")
 
@@ -148,7 +137,7 @@ if menu == "📝 Lançar & Gestão":
         if not df_edit.empty:
             contratos_ed = df_edit.groupby(['ID_Contrato', 'Cliente', 'Total', 'Vendedor', 'Data_Base']).size().reset_index()
             opcoes_ed = {f"{r['ID_Contrato']} | {r['Cliente']}": r for i, r in contratos_ed.iterrows()}
-            sel_ed = st.selectbox("Contrato para Alterar:", ["Selecione..."] + list(opcoes_ed.keys()))
+            sel_ed = st.selectbox("Selecione para Editar:", ["Selecione..."] + list(opcoes_ed.keys()))
             if sel_ed != "Selecione...":
                 d = opcoes_ed[sel_ed]
                 with st.form("edicao"):
@@ -172,8 +161,8 @@ elif menu == "📊 Relatórios":
 
         st.subheader("💰 Resumo de Comissões")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Recebidas (Caixa)", f"R$ {realizado['C_Num'].sum():,.2f}")
-        m2.metric("Previsão (Futuro)", f"R$ {previsao['C_Num'].sum():,.2f}")
-        m3.metric("Total Acumulado", f"R$ {df['C_Num'].sum():,.2f}")
+        m1.metric("Recebidas (Realizado)", f"R$ {realizado['C_Num'].sum():,.2f}")
+        m2.metric("Previsão (Pendente)", f"R$ {previsao['C_Num'].sum():,.2f}")
+        m3.metric("Potencial Total", f"R$ {df['C_Num'].sum():,.2f}")
         st.divider()
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
