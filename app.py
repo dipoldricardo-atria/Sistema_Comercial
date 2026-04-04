@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.6.1 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 8.7 ADMIN FLOW", layout="wide", page_icon="⚡")
 
 # --- CONFIGURAÇÕES FIXAS ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -20,6 +20,7 @@ IDs = {
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
+# --- FUNÇÕES DE SUPORTE ---
 def limpar_valor(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
@@ -70,7 +71,14 @@ menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatór
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
-        p = {f"entry.{IDs['cliente']}": f_cli, f"entry.{IDs['vendedor']}": f_vendedor, f"entry.{IDs['tipo']}": tipo, f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'), f"entry.{IDs['valor_parc']}": str(round(valor, 2)).replace('.', ','), f"entry.{IDs['comissao']}": str(round(comis_calc, 2)).replace('.', ','), f"entry.{IDs['status']}": "Pendente", f"entry.{IDs['valor_total']}": str(f_total).replace('.', ','), f"entry.{IDs['data_base']}": f_data.strftime('%Y-%m-%d'), f"entry.{IDs['id_contrato']}": id_final}
+        p = {
+            f"entry.{IDs['cliente']}": f_cli, f"entry.{IDs['vendedor']}": f_vendedor, 
+            f"entry.{IDs['tipo']}": tipo, f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'), 
+            f"entry.{IDs['valor_parc']}": str(round(valor, 2)).replace('.', ','), 
+            f"entry.{IDs['comissao']}": str(round(comis_calc, 2)).replace('.', ','), 
+            f"entry.{IDs['status']}": "Pendente", f"entry.{IDs['valor_total']}": str(f_total).replace('.', ','), 
+            f"entry.{IDs['data_base']}": f_data.strftime('%Y-%m-%d'), f"entry.{IDs['id_contrato']}": id_final
+        }
         requests.post(FORM_URL, data=p)
 
     if f_entrada > 0: enviar("Entrada", f_data, f_entrada)
@@ -97,22 +105,30 @@ if menu == "📝 Lançar & Gestão":
                 if f_cli and f_tot > 0:
                     id_novo = f"ID{int(time.time())}"
                     executar_gravacao(f_cli, vendedor_selecionado, f_data, f_tot, f_ent, f_pa, id_novo)
-                    st.success(f"✅ Gravado!")
+                    st.success("✅ Gravado!")
                     time.sleep(1); st.rerun()
 
     with tabs[1]:
-        st.subheader("💸 Baixa de Recebimento")
+        st.subheader("💸 Recebimento de Parcelas")
         df_f = carregar_dados_realtime()
         if not df_f.empty:
+            # Filtro para ignorar o que já está Pago ou Recebido
             pendentes = df_f[~df_f['Status'].astype(str).str.upper().isin(['PAGO', 'RECEBIDO'])]
             if not pendentes.empty:
                 for i, row in pendentes.iterrows():
-                    # A CHAVE (key) agora inclui o índice 'i' para evitar duplicidade
                     with st.expander(f"📌 {row['Cliente']} | {row['Tipo']} | R$ {row['Valor']}"):
+                        st.write(f"Vencimento Original: {row['Vencimento']}")
+                        # Chave do botão ÚNICA (TS + índice) para evitar erro de duplicidade
                         if st.button(f"Confirmar Pagamento", key=f"baixa_{row['TS']}_{i}"):
-                            requests.get(SCRIPT_URL, params={"ts": str(row['TS']), "action": "marcarPago"})
-                            st.success("Status atualizado!"); time.sleep(0.5); st.rerun()
-            else: st.info("Nenhuma parcela pendente.")
+                            ts_limpo = str(row['TS']).strip()
+                            # Chamada direta para o Script do Google
+                            res = requests.get(f"{SCRIPT_URL}?action=marcarPago&ts={ts_limpo}")
+                            if "Sucesso" in res.text:
+                                st.success("Status atualizado na planilha!")
+                                time.sleep(0.5); st.rerun()
+                            else:
+                                st.error(f"Erro ao comunicar com a planilha: {res.text}")
+            else: st.info("Tudo em dia! Sem pendências.")
 
     with tabs[2]:
         if cargo != "Admin": st.warning("Acesso restrito."); st.stop()
@@ -131,10 +147,10 @@ if menu == "📝 Lançar & Gestão":
                     if st.form_submit_button("✅ SALVAR ALTERAÇÕES"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
-                        st.rerun()
-                if st.button("🔥 APAGAR TUDO", type="primary", key="btn_delete_total"):
+                        st.success("Alterado!"); time.sleep(1); st.rerun()
+                if st.button("🔥 EXCLUIR CONTRATO", type="primary", key="del_final"):
                     requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
-                    st.rerun()
+                    st.success("Excluído!"); time.sleep(1); st.rerun()
 
 elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
