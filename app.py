@@ -14,7 +14,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-st.set_page_config(page_title="ERP 14.3 FINAL", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 14.4 FINAL", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -42,14 +42,25 @@ def carregar_dados_realtime():
         return df
     except: return pd.DataFrame()
 
-# --- MOTOR DE PDF ---
+# --- MOTOR DE PDF CORRIGIDO ---
 def gerar_pdf_espelho(df_filtrado, metrics, period):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     elements = []
     styles = getSampleStyleSheet()
+    
+    # Estilo do Título
     style_title = ParagraphStyle(name='TitleBR', parent=styles['Title'], fontSize=18, spaceAfter=20)
-    style_h2 = ParagraphStyle(name='H2', parent=styles['Heading2'], fontSize=14, spaceBefore=15, spaceAfter=10, textColor=colors.hexColor("#1f4e79"))
+    
+    # Estilo H2 Corrigido (sem o argumento que causou conflito)
+    style_h2 = ParagraphStyle(
+        name='H2', 
+        parent=styles['Heading2'], 
+        fontSize=14, 
+        spaceBefore=15, 
+        spaceAfter=10
+    )
+    style_h2.textColor = colors.hexColor("#1f4e79") # Atribuição direta para evitar erro
 
     elements.append(Paragraph(f"<b>RELATÓRIO DE DESEMPENHO COMERCIAL</b>", style_title))
     elements.append(Paragraph(f"<b>Período:</b> {period['inicio']} a {period['fim']}", styles['Normal']))
@@ -58,9 +69,14 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
 
     elements.append(Paragraph("1. RESUMO FINANCEIRO", style_h2))
     m_data = [["TOTAL CONTRATADO", "ATINGIMENTO META", "JÁ EM CAIXA", "SALDO A RECEBER"],
-              [metrics['total'], metrics['atingimento'], metrics['caixa'], metrics['saldo']]]
+              [metrics.get('total', '0'), metrics.get('atingimento', '0'), metrics.get('caixa', '0'), metrics.get('saldo', '0')]]
     tm = Table(m_data, colWidths=[130, 130, 130, 130])
-    tm.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('FONTSIZE', (0,0), (-1,-1), 9)]))
+    tm.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.hexColor("#f2f2f2")),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,0), (-1,-1), 9)
+    ]))
     elements.append(tm)
 
     elements.append(Paragraph("2. SAÚDE DOS RECEBIMENTOS (POR STATUS)", style_h2))
@@ -70,7 +86,11 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     for _, r in status_df.iterrows():
         s_data.append([str(r['Status']), f"R$ {r['V_Num']:,.2f}"])
     ts = Table(s_data, colWidths=[260, 260])
-    ts.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.hexColor("#1f4e79")), ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke), ('GRID', (0,0), (-1,-1), 0.5, colors.grey)]))
+    ts.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.hexColor("#1f4e79")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
+    ]))
     elements.append(ts)
 
     elements.append(PageBreak())
@@ -78,9 +98,20 @@ def gerar_pdf_espelho(df_filtrado, metrics, period):
     d_data = [["Cliente", "Tipo/Parc", "Vencimento", "Valor", "Status"]]
     df_sorted = df_filtrado.sort_values(['Data_Base', 'Cliente'], ascending=[False, True])
     for _, row in df_sorted.iterrows():
-        d_data.append([str(row['Cliente'])[:20], str(row['Tipo']), pd.to_datetime(row['Vencimento']).strftime('%d/%m/%Y'), f"R$ {para_numero_puro(row['Valor']):,.2f}", str(row['Status'])])
+        d_data.append([
+            str(row['Cliente'])[:20], 
+            str(row['Tipo']), 
+            pd.to_datetime(row['Vencimento']).strftime('%d/%m/%Y'), 
+            f"R$ {para_numero_puro(row['Valor']):,.2f}", 
+            str(row['Status'])
+        ])
     td = Table(d_data, repeatRows=1, colWidths=[150, 100, 80, 100, 90])
-    td.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.grey), ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.2, colors.black)]))
+    td.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.grey),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('GRID', (0,0), (-1,-1), 0.2, colors.black)
+    ]))
     elements.append(td)
     doc.build(elements)
     buffer.seek(0)
@@ -158,10 +189,20 @@ if menu == "📊 Dashboard Analytics":
         
         st.title("🚀 Business Intelligence Executivo")
         
-        res_metrics = {"total": f"R$ {t_contratado:,.2f}", "atingimento": f"{atingimento:.1f}%", "caixa": f"R$ {v_recebido:,.2f}", "saldo": f"R$ {t_contratado - v_recebido:,.2f}"}
+        res_metrics = {
+            "total": f"R$ {t_contratado:,.2f}", 
+            "atingimento": f"{atingimento:.1f}%", 
+            "caixa": f"R$ {v_recebido:,.2f}", 
+            "saldo": f"R$ {t_contratado - v_recebido:,.2f}"
+        }
         periodo = {"inicio": data_inicio.strftime('%d/%m/%Y'), "fim": data_fim.strftime('%d/%m/%Y')}
         
-        st.download_button("📄 BAIXAR RELATÓRIO PDF", data=gerar_pdf_espelho(df, res_metrics, periodo), file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+        # Gerar PDF
+        try:
+            pdf_data = gerar_pdf_espelho(df, res_metrics, periodo)
+            st.download_button("📄 BAIXAR RELATÓRIO PDF", data=pdf_data, file_name=f"Fechamento_{date.today()}.pdf", mime="application/pdf", use_container_width=True)
+        except Exception as e:
+            st.error(f"Erro ao gerar PDF: {e}")
 
         st.divider()
         c1, c2, c3, c4 = st.columns(4)
