@@ -6,9 +6,9 @@ import random
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 8.2 FINANCEIRO", layout="wide", page_icon="💰")
+st.set_page_config(page_title="ERP 8.4 PROTECTED", layout="wide", page_icon="🛡️")
 
-# --- CONFIGURAÇÕES (MANTIDAS) ---
+# --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc7YHdYRJZ4I92_cvu0xvHvpU9adHmHmY0RKFxm88NcpjppyA/formResponse"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
@@ -21,6 +21,14 @@ IDs = {
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
+# --- FUNÇÃO DE LIMPEZA DE NÚMEROS (IMPEDE O ERRO) ---
+def limpar_valor(valor):
+    try:
+        if pd.isna(valor) or str(valor).strip() == "": return 0.0
+        v = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
+        return float(v)
+    except: return 0.0
+
 def carregar_dados_realtime():
     try:
         r = requests.get(f"{SCRIPT_URL}?action=read", timeout=25)
@@ -30,7 +38,7 @@ def carregar_dados_realtime():
 
 # --- LOGIN ---
 if not st.session_state.logado:
-    st.title("🔐 Acesso Administrativo")
+    st.title("🔐 Login Administrativo")
     with st.form("login"):
         u_e = st.text_input("E-mail")
         u_s = st.text_input("Senha", type="password")
@@ -60,9 +68,10 @@ try:
     lista_vendedores = sorted(df_v['nome'].unique().tolist())
 except: lista_vendedores = [nome_user]
 
+# --- LÓGICA DE GRAVAÇÃO ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
-        comis_calc = valor * 0.05 # REGRA: 5% de comissão sobre a entrada/parcela
+        comis_calc = valor * 0.05
         p = {f"entry.{IDs['cliente']}": f_cli, f"entry.{IDs['vendedor']}": f_vendedor, f"entry.{IDs['tipo']}": tipo, f"entry.{IDs['vencimento']}": venc.strftime('%Y-%m-%d'), f"entry.{IDs['valor_parc']}": str(round(valor, 2)).replace('.', ','), f"entry.{IDs['comissao']}": str(round(comis_calc, 2)).replace('.', ','), f"entry.{IDs['status']}": "Pendente", f"entry.{IDs['valor_total']}": str(f_total).replace('.', ','), f"entry.{IDs['data_base']}": f_data.strftime('%Y-%m-%d'), f"entry.{IDs['id_contrato']}": id_final}
         requests.post(FORM_URL, data=p)
 
@@ -105,7 +114,7 @@ if menu == "📝 Lançar & Editar":
                         e_cli = st.text_input("Cliente", value=dados['Cliente'])
                         e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']), format="DD/MM/YYYY")
                         e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
-                        e_tot = st.number_input("Total", value=float(str(dados['Total']).replace(',','.')))
+                        e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
                         e_ent = st.number_input("Entrada/Pago", min_value=0.0)
                         e_pa = st.number_input("Parcelas", min_value=0, step=1)
                         if st.form_submit_button("✅ SALVAR"):
@@ -122,21 +131,18 @@ elif menu == "📊 Relatório & Comissões":
     if not df.empty:
         if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
         
-        # --- LÓGICA DE CAIXA E COMISSÃO ---
-        df['V_Num'] = df['Valor'].astype(str).str.replace(',', '.').astype(float)
-        df['C_Num'] = df['Comissão'].astype(str).str.replace(',', '.').astype(float)
+        # --- CÁLCULO SEGURO ---
+        df['V_Num'] = df['Valor'].apply(limpar_valor)
+        df['C_Num'] = df['Comissão'].apply(limpar_valor)
         
-        # Somente parcelas com status 'Pago' ou 'Recebido' geram comissão no caixa
-        # (Ajuste o termo 'Pago' para o que você usa na sua planilha)
-        pagas = df[df['Status'].isin(['Pago', 'Recebido', 'Entrada'])] 
-        pendentes = df[~df['Status'].isin(['Pago', 'Recebido', 'Entrada'])]
+        pagas = df[df['Status'].str.contains('Pago|Recebido|Entrada', case=False, na=False)]
+        pendentes = df[~df['Status'].str.contains('Pago|Recebido|Entrada', case=False, na=False)]
 
-        st.subheader("💰 Resumo de Comissões (Base: Recebimento)")
+        st.subheader("💰 Resumo de Comissões")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Comissões Pagas (Caixa)", f"R$ {pagas['C_Num'].sum():,.2f}")
-        c2.metric("Comissões a Pagar (Projeção)", f"R$ {pendentes['C_Num'].sum():,.2f}")
-        c3.metric("Total de Comissões", f"R$ {df['C_Num'].sum():,.2f}")
+        c1.metric("Comissões Pagas", f"R$ {pagas['C_Num'].sum():,.2f}")
+        c2.metric("Comissões Pendentes", f"R$ {pendentes['C_Num'].sum():,.2f}")
+        c3.metric("Total Geral", f"R$ {df['C_Num'].sum():,.2f}")
         
         st.divider()
-        st.markdown("### 📑 Detalhamento de Parcelas")
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
