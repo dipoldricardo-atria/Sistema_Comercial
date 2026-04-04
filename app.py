@@ -5,28 +5,31 @@ import time
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 9.1 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 9.2 ADMIN FLOW", layout="wide", page_icon="⚡")
 
-# --- CONFIGURAÇÕES FIXAS ---
-# Verifique se esta URL é a da sua "Nova Versão" do Google Script
+# --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-def limpar_valor(valor):
+# --- MOTOR DE CONVERSÃO NUMÉRICA (CRÍTICO PARA RELATÓRIOS) ---
+def forcar_numero(valor):
     try:
         if pd.isna(valor) or str(valor).strip() == "": return 0.0
-        v = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
+        # Remove R$, espaços, pontos de milhar e troca vírgula por ponto
+        v = str(valor).replace('R$', '').replace(' ', '').replace('.', '').replace(',', '.').strip()
         return float(v)
-    except: return 0.0
+    except:
+        return 0.0
 
 def carregar_dados_realtime():
     try:
         r = requests.get(f"{SCRIPT_URL}?action=read&t={int(time.time())}", timeout=25)
         df = pd.DataFrame(r.json()[1:], columns=['TS', 'Cliente', 'Vendedor', 'Tipo', 'Vencimento', 'Valor', 'Comissão', 'Status', 'Total', 'Data_Base', 'ID_Contrato'])
         return df
-    except: return pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
 # --- LOGIN ---
 if not st.session_state.logado:
@@ -61,22 +64,14 @@ if st.sidebar.button("🚪 Sair"):
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatório & Previsões"])
 
-# --- FUNÇÃO DE GRAVAÇÃO VIA SCRIPT (UNIFICADA) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
         params = {
-            "action": "create",
-            "cliente": f_cli,
-            "vendedor": f_vendedor,
-            "tipo": tipo,
-            "vencimento": venc.strftime('%Y-%m-%d'),
-            "valor": round(valor, 2),
-            "comissao": round(comis_calc, 2),
-            "status": "Pendente",
-            "total": f_total,
-            "data_base": f_data.strftime('%Y-%m-%d'),
-            "id_contrato": id_final
+            "action": "create", "cliente": f_cli, "vendedor": f_vendedor, "tipo": tipo,
+            "vencimento": venc.strftime('%Y-%m-%d'), "valor": round(valor, 2),
+            "comissao": round(comis_calc, 2), "status": "Pendente", "total": f_total,
+            "data_base": f_data.strftime('%Y-%m-%d'), "id_contrato": id_final
         }
         requests.get(SCRIPT_URL, params=params)
 
@@ -103,7 +98,7 @@ if menu == "📝 Lançar & Gestão":
             if st.form_submit_button("🚀 GRAVAR CONTRATO"):
                 if f_cli and f_tot > 0:
                     executar_gravacao(f_cli, v_sel, f_data, f_tot, f_ent, f_pa, f"ID{int(time.time())}")
-                    st.success("✅ Gravado com Sucesso!"); time.sleep(1); st.rerun()
+                    st.success("✅ Gravado!"); time.sleep(1); st.rerun()
 
     with tabs[1]:
         st.subheader("💸 Recebimento")
@@ -131,7 +126,7 @@ if menu == "📝 Lançar & Gestão":
                     e_cli = st.text_input("Cliente", value=dados['Cliente'])
                     e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']))
                     e_vend = st.selectbox("Vendedor", lista_vendedores, index=lista_vendedores.index(dados['Vendedor']) if dados['Vendedor'] in lista_vendedores else 0)
-                    e_tot = st.number_input("Total", value=limpar_valor(dados['Total']))
+                    e_tot = st.number_input("Total", value=forcar_numero(dados['Total']))
                     if st.form_submit_button("✅ SALVAR"):
                         requests.get(SCRIPT_URL, params={"id_contrato": dados['ID_Contrato'], "action": "deleteContrato"})
                         executar_gravacao(e_cli, e_vend, e_data, e_tot, 0, 0, dados['ID_Contrato'])
@@ -143,14 +138,35 @@ if menu == "📝 Lançar & Gestão":
 elif menu == "📊 Relatório & Previsões":
     df = carregar_dados_realtime()
     if not df.empty:
-        if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
-        df['C_Num'] = df['Comissão'].apply(limpar_valor)
-        st_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA']
-        realizado = df[df['Status'].astype(str).str.upper().isin(st_pagos)]
-        previsao = df[~df['Status'].astype(str).str.upper().isin(st_pagos)]
-        st.subheader("💰 Painel")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Pago", f"R$ {realizado['C_Num'].sum():,.2f}")
-        m2.metric("Pendente", f"R$ {previsao['C_Num'].sum():,.2f}")
-        m3.metric("Total", f"R$ {df['C_Num'].sum():,.2f}")
-        st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
+        # Se não for admin, vê apenas os seus dados
+        if cargo != "Admin":
+            df = df[df['Vendedor'] == nome_user]
+        
+        # Converte a coluna Comissão para números reais para garantir a soma correta
+        df['Comissao_Real'] = df['Comissão'].apply(forcar_numero)
+        
+        # Define quais status são considerados "Recebidos/Pagos"
+        # Incluímos variações para evitar erro de digitação na planilha
+        status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
+        
+        # Filtra as linhas
+        df_pagas = df[df['Status'].astype(str).str.upper().strip().isin(status_pagos)]
+        df_pendentes = df[~df['Status'].astype(str).str.upper().strip().isin(status_pagos)]
+        
+        # Cálculos Finais
+        total_pago = df_pagas['Comissao_Real'].sum()
+        total_pendente = df_pendentes['Comissao_Real'].sum()
+        total_geral = df['Comissao_Real'].sum()
+
+        st.subheader("💰 Painel de Comissões")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Comissões Pagas (Realizado)", f"R$ {total_pago:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        c2.metric("Comissões Pendentes (Previsão)", f"R$ {total_pendente:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        c3.metric("Total Acumulado", f"R$ {total_geral:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        
+        st.divider()
+        st.write("### 📋 Detalhamento de Lançamentos")
+        # Formata o DataFrame para exibição
+        df_display = df.copy()
+        df_display = df_display.sort_values('TS', ascending=False)
+        st.dataframe(df_display, use_container_width=True)
