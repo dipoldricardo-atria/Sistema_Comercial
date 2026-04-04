@@ -6,15 +6,15 @@ import re
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 10.1 ADMIN FLOW", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="ERP 10.2 ADMIN FLOW", layout="wide", page_icon="📈")
 
-# --- CONFIGURAÇÕES FIXAS ---
+# --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
 URL_USUARIOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2caIBTPvpKBGV1aITUlSrs5K0G8M5wRw3WURSqXMG-95bWK7PZG3HoILcdy9mvtwqYHl0EwVwW89V/pub?gid=1188945197&single=true&output=csv"
 
 if 'logado' not in st.session_state: st.session_state.logado = False
 
-# --- MOTOR DE LIMPEZA NUMÉRICA (PARA RELATÓRIOS PRECISOS) ---
+# --- MOTOR DE LIMPEZA ---
 def para_numero_puro(valor):
     if pd.isna(valor) or str(valor).strip() == "": return 0.0
     texto = re.sub(r'[^\d.,-]', '', str(valor))
@@ -66,7 +66,6 @@ if st.sidebar.button("🚪 Sair"):
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Relatório & Previsões"])
 
-# --- MOTOR DE GRAVAÇÃO ORIGINAL (RESTAURADO) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -143,24 +142,44 @@ elif menu == "📊 Relatório & Previsões":
     if not df.empty:
         if cargo != "Admin": df = df[df['Vendedor'] == nome_user]
         
-        # Converte para números para cálculos
+        # --- PREPARAÇÃO DE NÚMEROS ---
         df['C_Num'] = df['Comissão'].apply(para_numero_puro)
+        df['V_Num'] = df['Valor'].apply(para_numero_puro)
+        df['T_Num'] = df['Total'].apply(para_numero_puro)
         
         status_limpo = df['Status'].astype(str).str.upper().str.strip()
         status_pagos = ['PAGO', 'RECEBIDO', 'ENTRADA', 'À VISTA']
         
-        df_pagas = df[status_limpo.isin(status_pagos)]
-        df_pendentes = df[~status_limpo.isin(status_pagos)]
-        
-        total_pago = df_pagas['C_Num'].sum()
-        total_pendente = df_pendentes['C_Num'].sum()
-        total_geral = df['C_Num'].sum()
+        # --- CÁLCULO DE COMISSÕES (EXISTENTE) ---
+        comis_paga = df[status_limpo.isin(status_pagos)]['C_Num'].sum()
+        comis_pend = df[~status_limpo.isin(status_pagos)]['C_Num'].sum()
 
-        st.subheader("💰 Painel de Comissões")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Pagas (Realizado)", f"R$ {total_pago:,.2f}")
-        c2.metric("Pendentes (Previsão)", f"R$ {total_pendente:,.2f}")
-        c3.metric("Total Acumulado", f"R$ {total_geral:,.2f}")
+        # --- NOVA LÓGICA: FATURAMENTO DE PROJETOS ---
+        # 1. Total Contratado (Pega apenas 1 linha por ID_Contrato para não duplicar o total)
+        df_contratos únicos = df.drop_duplicates(subset=['ID_Contrato'])
+        total_contratado = df_contratos únicos['T_Num'].sum()
         
+        # 2. Total Recebido (Soma dos valores das parcelas pagas)
+        total_recebido = df[status_limpo.isin(status_pagos)]['V_Num'].sum()
+        
+        # 3. Total a Receber (Soma dos valores das parcelas pendentes)
+        total_a_receber = df[~status_limpo.isin(status_pagos)]['V_Num'].sum()
+
+        # --- INTERFACE ---
+        st.subheader("💰 Resumo de Comissões (Seu Ganho)")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Comissões Pagas", f"R$ {comis_paga:,.2f}")
+        m2.metric("Comissões a Receber", f"R$ {comis_pend:,.2f}")
+        m3.metric("Total Comissões", f"R$ {comis_paga + comis_pend:,.2f}")
+
         st.divider()
+        
+        st.subheader("🏢 Faturamento de Projetos (Valor de Venda)")
+        f1, f2, f3 = st.columns(3)
+        f1.metric("Total Contratado", f"R$ {total_contratado:,.2f}", help="Soma do valor total de todos os contratos fechados.")
+        f2.metric("Total já Recebido", f"R$ {total_recebido:,.2f}", help="Soma das entradas e parcelas já pagas.")
+        f3.metric("Saldo a Receber", f"R$ {total_a_receber:,.2f}", help="Soma de todas as parcelas que ainda constam como Pendente.")
+
+        st.divider()
+        st.write("### 📋 Listagem Geral")
         st.dataframe(df.sort_values('TS', ascending=False), use_container_width=True)
