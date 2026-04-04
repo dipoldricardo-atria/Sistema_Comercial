@@ -3,11 +3,11 @@ import pandas as pd
 import requests
 import time
 import re
-import plotly.express as px # Biblioteca para gráficos profissionais
+import plotly.express as px
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 12.0 VISION", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 12.1 VISION", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -69,8 +69,10 @@ if not df_raw.empty:
     vendedores_sel = st.sidebar.multiselect("Vendedores", vendedores_lista, default=vendedores_lista) if cargo == "Admin" else [nome_user]
     
     hoje = date.today()
-    data_inicio = st.sidebar.date_input("Início", hoje - relativedelta(months=3)) # Aumentei pra 3 meses para os gráficos ficarem melhores
-    data_fim = st.sidebar.date_input("Fim", hoje)
+    # ALTERAÇÃO SOLICITADA: Adicionado format="DD/MM/YYYY" para padrão brasileiro
+    st.sidebar.subheader("📅 Período de Fechamento")
+    data_inicio = st.sidebar.date_input("Início", value=hoje - relativedelta(months=3), format="DD/MM/YYYY")
+    data_fim = st.sidebar.date_input("Fim", value=hoje, format="DD/MM/YYYY")
 
     status_filtro = st.sidebar.selectbox("Status", ["Todos", "Pago", "Pendente"])
     busca_cliente = st.sidebar.text_input("🎯 Cliente")
@@ -95,7 +97,7 @@ if st.sidebar.button("🚪 Sair"):
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Dashboard Analytics"])
 
-# --- LÓGICA DE GRAVAÇÃO (MANTIDA INTEGRALMENTE DO CHECKPOINT 11.3) ---
+# --- LÓGICA DE GRAVAÇÃO (INTACTA - CHECKPOINT 11.3) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -131,7 +133,6 @@ if menu == "📝 Lançar & Gestão":
                     executar_gravacao(f_cli, v_sel, f_data, f_tot, f_ent, f_pa, f"ID{int(time.time())}")
                     st.success("✅ Gravado com Sucesso!"); time.sleep(1); st.rerun()
 
-    # (Tabs de Baixa e Edição mantidas iguais ao Checkpoint 11.3)
     with tabs[1]:
         st.subheader("💸 Recebimento")
         if not df_raw.empty:
@@ -155,7 +156,7 @@ if menu == "📝 Lançar & Gestão":
                 dados = opcoes[sel]
                 with st.form("edicao"):
                     e_cli = st.text_input("Cliente", value=dados['Cliente'])
-                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']).date())
+                    e_data = st.date_input("Data Base", value=pd.to_datetime(dados['Data_Base']).date(), format="DD/MM/YYYY")
                     e_vend = st.selectbox("Vendedor", vendedores_lista, index=vendedores_lista.index(dados['Vendedor']) if dados['Vendedor'] in vendedores_lista else 0)
                     e_tot = st.number_input("Total", value=para_numero_puro(dados['Total']))
                     if st.form_submit_button("✅ SALVAR"):
@@ -177,43 +178,36 @@ elif menu == "📊 Dashboard Analytics":
         
         st.title("🚀 Business Intelligence")
         
-        # --- LINHA 1: MÉTRICAS E META ---
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Faturamento Filtrado", f"R$ {total_contratado:,.2f}")
         c2.metric("Meta Definida", f"R$ {meta_mensal:,.2f}")
-        c3.metric("Atingimento de Meta", f"{atingimento:.1f}%")
-        c4.progress(min(atingimento/100, 1.0), text=f"Progresso: {atingimento:.1f}%")
+        c3.metric("Atingimento", f"{atingimento:.1f}%")
+        c4.progress(min(atingimento/100, 1.0), text=f"{atingimento:.1f}% da Meta")
 
         st.divider()
 
-        # --- LINHA 2: GRÁFICOS ---
         g1, g2 = st.columns([2, 1])
-
         with g1:
-            st.subheader("📅 Evolução Mensal (Data Base)")
+            st.subheader("📅 Evolução Mensal")
             df_vendas_mes = df_unicos.groupby('Mes_Ano')['T_Num'].sum().reset_index()
             fig_evol = px.line(df_vendas_mes, x='Mes_Ano', y='T_Num', markers=True, 
-                               labels={'T_Num': 'Total Contratado (R$)', 'Mes_Ano': 'Mês de Referência'},
+                               labels={'T_Num': 'Total (R$)', 'Mes_Ano': 'Mês'},
                                color_discrete_sequence=['#00CC96'])
             st.plotly_chart(fig_evol, use_container_width=True)
 
         with g2:
-            st.subheader("👥 Share por Vendedor")
+            st.subheader("👥 Share Vendedores")
             fig_pizza = px.pie(df_unicos, values='T_Num', names='Vendedor', hole=.4)
             st.plotly_chart(fig_pizza, use_container_width=True)
 
         st.divider()
-
-        # --- LINHA 3: SAÚDE FINANCEIRA ---
-        st.subheader("🏦 Saúde dos Recebimentos")
+        st.subheader("🏦 Saúde Financeira")
         df_status = df.groupby('Status')['V_Num'].sum().reset_index()
         fig_status = px.bar(df_status, x='Status', y='V_Num', color='Status', 
                             labels={'V_Num': 'Valor (R$)'}, text_auto='.2s')
         st.plotly_chart(fig_status, use_container_width=True)
-
-        # Exportação rápida
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Baixar Base Filtrada (CSV)", data=csv, file_name="bi_export.csv", mime="text/csv")
         
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Baixar Base CSV", data=csv, file_name="bi_export.csv", mime="text/csv")
     else:
-        st.warning("Sem dados para gerar gráficos com os filtros atuais.")
+        st.warning("Sem dados para gerar gráficos no período selecionado.")
