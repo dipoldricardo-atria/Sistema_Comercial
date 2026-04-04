@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="ERP 12.1 VISION", layout="wide", page_icon="📊")
+st.set_page_config(page_title="ERP 12.2 VISION", layout="wide", page_icon="📊")
 
 # --- CONFIGURAÇÕES ---
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJiJlQIZeqvt3P09trAdfMecjutOFGVE1jsxPmcdh05nn2cKapdzVnJp8ASmIxCYfLQQ/exec"
@@ -69,13 +69,15 @@ if not df_raw.empty:
     vendedores_sel = st.sidebar.multiselect("Vendedores", vendedores_lista, default=vendedores_lista) if cargo == "Admin" else [nome_user]
     
     hoje = date.today()
-    # ALTERAÇÃO SOLICITADA: Adicionado format="DD/MM/YYYY" para padrão brasileiro
     st.sidebar.subheader("📅 Período de Fechamento")
     data_inicio = st.sidebar.date_input("Início", value=hoje - relativedelta(months=3), format="DD/MM/YYYY")
     data_fim = st.sidebar.date_input("Fim", value=hoje, format="DD/MM/YYYY")
 
     status_filtro = st.sidebar.selectbox("Status", ["Todos", "Pago", "Pendente"])
-    busca_cliente = st.sidebar.text_input("🎯 Cliente")
+    
+    # NOVO FILTRO DE CLIENTE COM AUTOCOMPLETE/LISTA
+    lista_clientes_base = ["Todos"] + sorted(df_raw['Cliente'].unique().tolist())
+    busca_cliente = st.sidebar.selectbox("🎯 Selecionar Cliente", options=lista_clientes_base)
 
     # APLICAÇÃO FILTROS
     df = df_raw.copy()
@@ -87,8 +89,9 @@ if not df_raw.empty:
         st_l = df['Status'].astype(str).str.upper().str.strip()
         df = df[st_l.isin(pgs)] if status_filtro == "Pago" else df[~st_l.isin(pgs)]
     
-    if busca_cliente:
-        df = df[df['Cliente'].str.contains(busca_cliente, case=False, na=False)]
+    # Lógica do filtro de cliente atualizada
+    if busca_cliente != "Todos":
+        df = df[df['Cliente'] == busca_cliente]
 
 # --- NAVEGAÇÃO ---
 if st.sidebar.button("🚪 Sair"):
@@ -97,7 +100,7 @@ if st.sidebar.button("🚪 Sair"):
 
 menu = st.sidebar.radio("Navegação", ["📝 Lançar & Gestão", "📊 Dashboard Analytics"])
 
-# --- LÓGICA DE GRAVAÇÃO (INTACTA - CHECKPOINT 11.3) ---
+# --- MOTOR DE GRAVAÇÃO (INTACTO) ---
 def executar_gravacao(f_cli, f_vendedor, f_data, f_total, f_entrada, f_parc, id_final):
     def enviar(tipo, venc, valor):
         comis_calc = valor * 0.05
@@ -210,4 +213,4 @@ elif menu == "📊 Dashboard Analytics":
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Baixar Base CSV", data=csv, file_name="bi_export.csv", mime="text/csv")
     else:
-        st.warning("Sem dados para gerar gráficos no período selecionado.")
+        st.warning("Sem dados para os filtros selecionados.")
